@@ -1,0 +1,27 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Lambda functions logs uploaded files from S3
+
+Resources:
+
+  UploadEventLogger:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: UploadEventLogger2
+      Handler: UploadEventLogger
+      CodeUri: ./target/UploadEventLogger-1.0.0-SNAPSHOT.jar
+      Runtime: java8
+      MemorySize: 256
+      Timeout: 30
+      Role: arn:aws:iam::092245956406:role/lambda_basic_execution
+      Events:
+        FileUpload:
+          Type: S3
+          Properties:
+            Bucket: !Ref Bucket
+            Events: s3:ObjectCreated:*
+
+  Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: talisker-test-bucket
