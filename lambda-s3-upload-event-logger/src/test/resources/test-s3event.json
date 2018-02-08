@@ -11,12 +11,12 @@
         "object": {
           "eTag": "0123456789abcdef0123456789abcdef",
           "sequencer": "0A1B2C3D4E5F678901",
-          "key": "data_in_the_cloud.jpg",
-          "size": 37367
+          "key": "test-object-key",
+          "size": 1234
         },
         "bucket": {
-          "arn": "arn:aws:s3:::ttulka-test-bucket",
-          "name": "ttulka-test-bucket",
+          "arn": "arn:aws:s3:::test-bucket-name",
+          "name": "test-bucket-name",
           "ownerIdentity": {
             "principalId": "EXAMPLE"
           }

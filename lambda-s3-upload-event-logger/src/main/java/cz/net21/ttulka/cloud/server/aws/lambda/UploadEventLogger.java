@@ -15,6 +15,7 @@ import lombok.extern.log4j.Log4j2;
 @Log4j2
 public class UploadEventLogger implements RequestHandler<S3Event, String> {
 
+    // save expensive resources as static to be reused by the container
     static AmazonS3 s3Client;
 
     @Override
@@ -25,9 +26,13 @@ public class UploadEventLogger implements RequestHandler<S3Event, String> {
 
         long objectSize = getS3ObjectSize(s3entity);
 
-        log.info(String.format("Object size: %d", objectSize));
+        logObjectSize(objectSize);
 
         return String.format("%s/%s:%d", s3entity.getBucket().getName(), s3entity.getObject().getKey(), objectSize);
+    }
+
+    void logObjectSize(long objectSize) {
+        log.info(String.format("Object size: %d", objectSize));
     }
 
     private long getS3ObjectSize(S3EventNotification.S3Entity s3entity) {
@@ -43,18 +48,14 @@ public class UploadEventLogger implements RequestHandler<S3Event, String> {
 
     private AmazonS3 getS3Client() {
         if (s3Client == null) {
-            synchronized (UploadEventLogger.class) {
-                if (s3Client == null) {
-                    AWSCredentialsProvider credentialsProvider = new DefaultAWSCredentialsProviderChain();
+            AWSCredentialsProvider credentialsProvider = new DefaultAWSCredentialsProviderChain();
 
-                    log.info(String.format("Connecting to S3 with the Access Key Id %s.",
-                                           credentialsProvider.getCredentials().getAWSAccessKeyId()));
+            log.info(String.format("Connecting to S3 with the Access Key Id %s.",
+                                   credentialsProvider.getCredentials().getAWSAccessKeyId()));
 
-                    s3Client = AmazonS3ClientBuilder.standard()
-                            .withCredentials(credentialsProvider)
-                            .build();
-                }
-            }
+            s3Client = AmazonS3ClientBuilder.standard()
+                    .withCredentials(credentialsProvider)
+                    .build();
         }
         return s3Client;
     }
