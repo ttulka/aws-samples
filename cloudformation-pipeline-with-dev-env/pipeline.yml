@@ -1,0 +1,224 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Template for full CI/CD client applications."
+Parameters:
+  AppName:
+    Type: String
+    Description: Name of the application.
+    MinLength: "1"
+    MaxLength: "80"
+    AllowedPattern: "[a-z0-9-]+"
+    ConstraintDescription: Malformed input parameter. AppName must only contain lower case letters, numbers, and -.
+  SAMInputFile:
+    Type: String
+    Description: The filename for the SAM file.
+  SAMOutputFile:
+    Type: String
+    Description: The filename for the output SAM file from the buildspec file.
+  ConfigFile:
+    Type: String
+    Description: The cloudformation config file.
+  CodeBuildImage:
+    Type: String
+    Default: "aws/codebuild/java:openjdk-8"
+    Description: Image used for CodeBuild project.
+  CodeCommitRepoName:
+    Type: String
+    Description: The CodeCommit repo name
+  CodeCommitRepoBranch:
+    Type: String
+    Description: The CodeCommit repo branch code pipelines should watch for changes on
+  CodePipelineRole:
+    Type: String
+    Description: Role the pipeline will use
+  CloudformationRole:
+    Type: String
+    Description: Role for cloudformation
+  CodeBuildRole:
+    Type: String
+    Description: Role for code build
+  ArtifactoryBucketName:
+    Type: String
+    Description: Artifactory S3 bucket
+    Default: "ttulka-artifactory"
+
+Resources:
+  CodeBuildProject:
+    DependsOn: [S3ArtifactBucket]
+    Description: Creating AWS CodeBuild project
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Artifacts:
+        Type: CODEPIPELINE
+      Description: !Sub "Building stage for ${AppName}."
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: !Ref CodeBuildImage
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+        - Name: S3_BUCKET
+          Value: !Ref S3ArtifactBucket
+        - Name: S3_ARTIFACTORY_BUCKET
+          Value: !Ref ArtifactoryBucketName
+        - Name: S3_TEST_BUCKET
+          Value: !Sub "ttulka-${AppName}-test-bucket"
+      Name: !Sub "${AppName}-build"
+      ServiceRole: !Ref CodeBuildRole
+      Source:
+        Type: CODEPIPELINE
+      Tags:
+        - Key: app-name
+          Value: !Ref AppName
+      TimeoutInMinutes: 5
+  CodeBuildTestProject:
+    Description: Creating AWS CodeBuild integration test project
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Artifacts:
+        Type: CODEPIPELINE
+      Description: !Sub "Building test stage for ${AppName}."
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: !Ref CodeBuildImage
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+        - Name: S3_TEST_BUCKET
+          Value: !Sub "ttulka-${AppName}-test-bucket"
+      Name: !Sub "${AppName}-test"
+      ServiceRole: !Ref CodeBuildRole
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: buildspec-test.yml
+      Tags:
+        - Key: app-name
+          Value: !Ref AppName
+      TimeoutInMinutes: 5
+  S3ArtifactBucket:
+    Description: Creating Amazon S3 bucket for AWS CodePipeline artifacts
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      BucketName: !Sub "ttulka-pipeline-artifacts-${AppName}-${AWS::Region}"
+      VersioningConfiguration:
+        Status: Enabled
+  S3ArtifactBucketPolicy:
+    DependsOn: [S3ArtifactBucket]
+    Description: Setting Amazon S3 bucket policy for AWS CodePipeline access
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3ArtifactBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Id: SSEAndSSLPolicy
+        Statement:
+        - Sid: DenyInsecureConnections
+          Effect: Deny
+          Principal: "*"
+          Action: s3:*
+          Resource: !Sub "arn:aws:s3:::${S3ArtifactBucket}/*"
+          Condition:
+            Bool:
+              aws:SecureTransport: false
+  ProjectPipeline:
+    DependsOn: [S3ArtifactBucket, CodeBuildProject, CodeBuildTestProject]
+    Description: Creating a deployment pipeline for your project in AWS CodePipeline
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub "${AppName}-pipeline"
+      RoleArn: !Ref CodePipelineRole
+      RestartExecutionOnUpdate: true
+      Stages:
+      - Name: Source
+        Actions:
+        - Name: source
+          ActionTypeId:
+            Category: Source
+            Owner: AWS
+            Provider: CodeCommit
+            Version: "1"
+          InputArtifacts: []
+          OutputArtifacts:
+          - Name: !Sub "${AppName}-SourceArtifact"
+          Configuration:
+            RepositoryName: !Ref CodeCommitRepoName
+            BranchName: !Ref CodeCommitRepoBranch
+          RunOrder: 1
+      - Name: Build
+        Actions:
+        - Name: build-from-source
+          InputArtifacts:
+          - Name: !Sub "${AppName}-SourceArtifact"
+          ActionTypeId:
+            Category: Build
+            Owner: AWS
+            Version: "1"
+            Provider: CodeBuild
+          OutputArtifacts:
+          - Name: !Sub "${AppName}-BuildArtifact"
+          Configuration:
+            ProjectName: !Sub "${AppName}-build"
+          RunOrder: 1
+      - Name: DeployTest
+        Actions:
+        - Name: create-changeset
+          InputArtifacts:
+          - Name: !Sub "${AppName}-BuildArtifact"
+          ActionTypeId:
+            Category: Deploy
+            Owner: AWS
+            Version: "1"
+            Provider: CloudFormation
+          OutputArtifacts: []
+          Configuration:
+            StackName: !Sub "${AppName}-test-stack"
+            ActionMode: CHANGE_SET_REPLACE
+            RoleArn: !Ref CloudformationRole
+            ChangeSetName: pipeline-changeset
+            Capabilities: CAPABILITY_NAMED_IAM
+            TemplatePath: !Sub "${AppName}-BuildArtifact::${SAMOutputFile}"
+            TemplateConfiguration: !Sub "${AppName}-BuildArtifact::${ConfigFile}"
+          RunOrder: 1
+        - Name: execute-changeset
+          InputArtifacts: []
+          ActionTypeId:
+            Category: Deploy
+            Owner: AWS
+            Version: "1"
+            Provider: CloudFormation
+          OutputArtifacts: []
+          Configuration:
+            StackName: !Sub "${AppName}-test-stack"
+            ActionMode: CHANGE_SET_EXECUTE
+            ChangeSetName: pipeline-changeset
+          RunOrder: 2
+      - Name: IntegrationTest
+        Actions:
+        - Name: run-tests
+          InputArtifacts:
+          - Name: !Sub "${AppName}-SourceArtifact"
+          ActionTypeId:
+            Category: Test
+            Owner: AWS
+            Version: "1"
+            Provider: CodeBuild
+          OutputArtifacts: []
+          Configuration:
+            ProjectName: !Sub "${AppName}-test"
+          RunOrder: 1
+      - Name: UndeployTest
+        Actions:
+        - Name: detele-stack
+          InputArtifacts: []
+          ActionTypeId:
+            Category: Deploy
+            Owner: AWS
+            Version: "1"
+            Provider: CloudFormation
+          OutputArtifacts: []
+          Configuration:
+            StackName: !Sub "${AppName}-test-stack"
+            ActionMode: DELETE_ONLY
+            RoleArn: !Ref CloudformationRole
+          RunOrder: 1
+      ArtifactStore:
+        Type: S3
+        Location: !Ref S3ArtifactBucket

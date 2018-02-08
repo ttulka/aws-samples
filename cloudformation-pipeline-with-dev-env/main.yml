@@ -1,0 +1,58 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Main template for a CI/CD client application."
+Parameters:
+  AppName:
+    Type: String
+    Description: Name of the application.
+    MinLength: "1"
+    MaxLength: "80"
+    AllowedPattern: "[A-Za-z0-9-]+"
+    ConstraintDescription: Malformed input parameter. AppName must only contain upper and lower case letters, numbers, and -.
+    Default: cloud-client
+  SAMInputFile:
+    Type: String
+    Description: The filename for the SAM file.
+    Default: sam.yml
+  SAMOutputFile:
+    Type: String
+    Description: The filename for the output SAM file from the buildspec file.
+    Default: template.yml
+  ConfigFile:
+      Type: String
+      Description: The cloudformation config file.
+      Default: dev.json
+  CodeBuildImage:
+    Type: String
+    Default: "aws/codebuild/java:openjdk-8"
+    Description: Image used for CodeBuild project.
+  CodeCommitRepoName:
+    Type: String
+    Description: The CodeCommit repo name
+    Default: CloudClient
+  CodeCommitRepoBranch:
+    Type: String
+    Description: The CodeCommit repo branch code pipelines should watch for changes on
+    Default: master
+Resources:
+  Roles:
+    Type: "AWS::CloudFormation::Stack"
+    Properties:
+      Parameters:
+        AppName: !Ref AppName
+      TemplateURL: !Sub "https://s3.eu-central-1.amazonaws.com/ttulka-cloudformation/${AppName}/pipeline-roles.yml"
+  Pipeline:
+    Type: "AWS::CloudFormation::Stack"
+    DependsOn: [Roles]
+    Properties:
+      Parameters:
+        AppName: !Ref AppName
+        SAMInputFile: !Ref SAMInputFile
+        SAMOutputFile: !Ref SAMOutputFile
+        ConfigFile: !Ref ConfigFile
+        CodeBuildImage: !Ref CodeBuildImage
+        CodeCommitRepoName: !Ref CodeCommitRepoName
+        CodeCommitRepoBranch: !Ref CodeCommitRepoBranch
+        CodePipelineRole: !GetAtt Roles.Outputs.CodePipelineRole
+        CloudformationRole: !GetAtt Roles.Outputs.CloudformationDeployRole
+        CodeBuildRole: !GetAtt Roles.Outputs.CodeBuildRole
+      TemplateURL: !Sub "https://s3.eu-central-1.amazonaws.com/ttulka-cloudformation/${AppName}/pipeline.yml"
