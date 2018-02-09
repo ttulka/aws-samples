@@ -4,10 +4,14 @@ Description: Lambda functions logs uploaded files from S3
 
 Parameters:
     BucketName:
-        Description: "S bucket name"
+        Description: "S3 bucket name"
         Type: "String"
 
 Resources:
+  Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketName
 
   UploadEventLogger:
     Type: AWS::Serverless::Function
@@ -18,15 +22,21 @@ Resources:
       Runtime: java8
       MemorySize: 256
       Timeout: 30
-      Role: arn:aws:iam::092245956406:role/lambda_basic_execution
+      Policies:
+      - Version: 2012-10-17
+        Statement:
+          - Resource: !Sub "arn:aws:s3:::${BucketName}/*"
+            Action: s3:GetObject*
+            Effect: Allow
+          - Resource: arn:aws:logs:*
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Effect: Allow
       Events:
         FileUpload:
           Type: S3
           Properties:
             Bucket: !Ref Bucket
             Events: s3:ObjectCreated:*
-
-  Bucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Ref BucketName
