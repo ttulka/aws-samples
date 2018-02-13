@@ -9,6 +9,10 @@ Parameters:
     AllowedPattern: "[A-Za-z0-9-]+"
     ConstraintDescription: Malformed input parameter. AppName must only contain upper and lower case letters, numbers, and -.
     Default: cloud-client
+  TemplateLocation:
+    Type: String
+    Description: S3 location of the template files.
+    Default: "https://s3.eu-central-1.amazonaws.com/ttulka-cloudformation/cloud-client"
   SAMInputFile:
     Type: String
     Description: The filename for the SAM file.
@@ -39,7 +43,7 @@ Resources:
     Properties:
       Parameters:
         AppName: !Ref AppName
-      TemplateURL: !Sub "https://s3.eu-central-1.amazonaws.com/ttulka-cloudformation/${AppName}/pipeline-roles.yml"
+      TemplateURL: !Sub "${TemplateLocation}/pipeline-roles.yml"
   Pipeline:
     Type: "AWS::CloudFormation::Stack"
     DependsOn: [Roles]
@@ -55,4 +59,4 @@ Resources:
         CodePipelineRole: !GetAtt Roles.Outputs.CodePipelineRole
         CloudformationRole: !GetAtt Roles.Outputs.CloudformationDeployRole
         CodeBuildRole: !GetAtt Roles.Outputs.CodeBuildRole
-      TemplateURL: !Sub "https://s3.eu-central-1.amazonaws.com/ttulka-cloudformation/${AppName}/pipeline.yml"
+      TemplateURL: !Sub "${TemplateLocation}/pipeline.yml"
