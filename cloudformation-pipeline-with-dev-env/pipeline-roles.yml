@@ -1,11 +1,14 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: Common resources for the application
+Description: Common security resources
 Parameters:
   AppName:
     Type: String
     Description: Name of the application.
     MinLength: "1"
     MaxLength: "100"
+  CodeCommitRepoName:
+    Type: String
+    Description: The CodeCommit repo name
 Resources:
   CodeBuildTrustRole:
     Description: Creating service role in IAM for AWS CodeBuild
@@ -31,7 +34,7 @@ Resources:
           Resource: "*"
           Effect: Allow
         - Action: ["codecommit:*"]
-          Resource: "*"
+          Resource: !Sub "arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${CodeCommitRepoName}"
           Effect: Allow
         - Action: ["s3:*"]
           Resource: "*"
@@ -40,9 +43,6 @@ Resources:
           Resource: "*"
           Effect: Allow
         - Action: ["sns:SendMessage"]
-          Resource: "*"
-          Effect: Allow
-        - Action: ["ssm:GetParameters"]
           Resource: "*"
           Effect: Allow
       Roles: [!Ref CodeBuildTrustRole]
@@ -69,10 +69,7 @@ Resources:
         - Action: ["s3:*"]
           Resource: "*"
           Effect: Allow
-        - Action: ["iam:GetRole", "iam:CreateRole", "iam:DeleteRole"]
-          Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/${AppName}-*"
-          Effect: Allow
-        - Action: ["iam:AttachRolePolicy", "iam:DetachRolePolicy"]
+        - Action: ["iam:GetRole", "iam:CreateRole", "iam:DeleteRole", "iam:AttachRolePolicy", "iam:DetachRolePolicy", "iam:DeleteRolePolicy", "iam:PutRolePolicy"]
           Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/${AppName}-*"
           Effect: Allow
         - Action: ["iam:PassRole"]
@@ -103,12 +100,12 @@ Resources:
       PolicyDocument:
         Statement:
         - Action: ["codecommit:CancelUploadArchive", "codecommit:GetBranch", "codecommit:GetCommit", "codecommit:GetUploadArchiveStatus", "codecommit:UploadArchive"]
-          Resource: "*"
+          Resource: !Sub "arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${CodeCommitRepoName}"
           Effect: Allow
         - Action: ["codebuild:StartBuild", "codebuild:BatchGetBuilds"]
-          Resource: "*"
+          Resource: !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/${AppName}*"
           Effect: Allow
-        - Action: ["cloudwatch:*", "s3:*", "sns:*", "cloudformation:*", "sqs:*", "iam:PassRole"]
+        - Action: ["cloudwatch:*", "s3:*", "cloudformation:*", "iam:PassRole"]
           Resource: "*"
           Effect: Allow
       Roles: [!Ref CodePipelineTrustRole]
