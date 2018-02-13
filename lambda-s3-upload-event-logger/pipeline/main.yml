@@ -8,6 +8,11 @@ Parameters:
     MaxLength: "80"
     AllowedPattern: "[A-Za-z0-9-]+"
     ConstraintDescription: Malformed input parameter. AppName must only contain upper and lower case letters, numbers, and -.
+    Default: upload-event-logger
+  TemplateLocation:
+    Type: String
+    Description: S3 location of the template files.
+    Default: "https://s3.eu-central-1.amazonaws.com/ttulka-cloudformation/upload-event-logger
   SAMInputFile:
     Type: String
     Description: The filename for the SAM file.
@@ -37,7 +42,7 @@ Resources:
     Properties:
       Parameters:
         AppName: !Ref AppName
-      TemplateURL: !Sub "https://s3.eu-central-1.amazonaws.com/ttulka-cloudformation/${AppName}/pipeline-roles.yml"
+      TemplateURL: !Sub "${TemplateLocation}/pipeline-roles.yml"
   ServerlessPipeline:
     Type: "AWS::CloudFormation::Stack"
     DependsOn: [ServerlessRoles]
@@ -53,4 +58,4 @@ Resources:
         CodePipelineRole: !GetAtt ServerlessRoles.Outputs.CodePipelineRole
         CloudformationRole: !GetAtt ServerlessRoles.Outputs.CloudformationDeployRole
         CodeBuildRole: !GetAtt ServerlessRoles.Outputs.CodeBuildRole
-      TemplateURL: !Sub "https://s3.eu-central-1.amazonaws.com/ttulka-cloudformation/${AppName}/pipeline.yml"
+      TemplateURL: !Sub "${TemplateLocation}/pipeline.yml"
