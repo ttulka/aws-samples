@@ -30,20 +30,14 @@ Resources:
       PolicyName: CodeBuildRolePolicy
       PolicyDocument:
         Statement:
-        - Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
+        - Action: ["s3:*"]
           Resource: "*"
           Effect: Allow
         - Action: ["codecommit:*"]
           Resource: !Sub "arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${CodeCommitRepoName}"
           Effect: Allow
-        - Action: ["s3:*"]
-          Resource: "*"
-          Effect: Allow
-        - Action: ["kms:GenerateDataKey*", "kms:Encrypt", "kms:Decrypt"]
-          Resource: "*"
-          Effect: Allow
-        - Action: ["sns:SendMessage"]
-          Resource: "*"
+        - Action: ["logs:CreateLogStream", "logs:PutLogEvents"]
+          Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${AppName}*"
           Effect: Allow
       Roles: [!Ref CodeBuildTrustRole]
   CloudFormationTrustRole:
@@ -69,11 +63,8 @@ Resources:
         - Action: ["s3:*"]
           Resource: "*"
           Effect: Allow
-        - Action: ["iam:GetRole", "iam:CreateRole", "iam:DeleteRole", "iam:AttachRolePolicy", "iam:DetachRolePolicy", "iam:DeleteRolePolicy", "iam:PutRolePolicy"]
-          Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/${AppName}-*"
-          Effect: Allow
-        - Action: ["iam:PassRole"]
-          Resource: "*"
+        - Action: ["iam:GetRole", "iam:CreateRole", "iam:DeleteRole", "iam:AttachRolePolicy", "iam:DetachRolePolicy", "iam:DeleteRolePolicy", "iam:PutRolePolicy", "iam:PassRole"]
+          Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/${AppName}*"
           Effect: Allow
         - Action: ["cloudformation:CreateChangeSet"]
           Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31"
@@ -99,14 +90,20 @@ Resources:
       PolicyName: CodePipelineRolePolicy
       PolicyDocument:
         Statement:
+        - Action: ["s3:*"]
+          Resource: "*"
+          Effect: Allow
         - Action: ["codecommit:CancelUploadArchive", "codecommit:GetBranch", "codecommit:GetCommit", "codecommit:GetUploadArchiveStatus", "codecommit:UploadArchive"]
           Resource: !Sub "arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${CodeCommitRepoName}"
           Effect: Allow
         - Action: ["codebuild:StartBuild", "codebuild:BatchGetBuilds"]
           Resource: !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/${AppName}*"
           Effect: Allow
-        - Action: ["cloudwatch:*", "s3:*", "cloudformation:*", "iam:PassRole"]
-          Resource: "*"
+        - Action: ["cloudformation:DescribeStacks", "cloudformation:DescribeChangeSet", "cloudformation:CreateChangeSet", "cloudformation:ExecuteChangeSet"]
+          Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AppName}-app-stack/*"
+          Effect: Allow
+        - Action: ["iam:PassRole"]
+          Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/${AppName}-cloudformation-role"
           Effect: Allow
       Roles: [!Ref CodePipelineTrustRole]
 Outputs:
