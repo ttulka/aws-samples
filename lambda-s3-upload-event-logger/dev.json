@@ -1,5 +1,6 @@
 {
   "Parameters": {
-    "BucketName": "ttulka-test-bucket"
+    "BucketName": "ttulka-test-bucket",
+    "DeployAlias": "dev"
   }
 }

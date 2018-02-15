@@ -22,6 +22,7 @@ Resources:
       Runtime: java8
       MemorySize: 256
       Timeout: 30
+      AutoPublishAlias: !Ref DeployAlias
       Policies:
       - Version: 2012-10-17
         Statement:
@@ -40,3 +41,5 @@ Resources:
           Properties:
             Bucket: !Ref Bucket
             Events: s3:ObjectCreated:*
+      DeploymentPreference:
+             Type: AllAtOnce
