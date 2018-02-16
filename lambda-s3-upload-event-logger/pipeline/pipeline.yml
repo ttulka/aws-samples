@@ -104,15 +104,15 @@ Resources:
       Stages:
       - Name: Source
         Actions:
-        - Name: source
+        - Name: source     
+          InputArtifacts: []
+          OutputArtifacts:
+          - Name: !Sub "${AppName}-SourceArtifact"
           ActionTypeId:
             Category: Source
             Owner: AWS
             Provider: CodeCommit
             Version: "1"
-          InputArtifacts: []
-          OutputArtifacts:
-          - Name: !Sub "${AppName}-SourceArtifact"
           Configuration:
             RepositoryName: !Ref CodeCommitRepoName
             BranchName: !Ref CodeCommitRepoBranch
@@ -121,14 +121,14 @@ Resources:
         Actions:
         - Name: build-from-source
           InputArtifacts:
-          - Name: !Sub "${AppName}-SourceArtifact"
+          - Name: !Sub "${AppName}-SourceArtifact"   
+          OutputArtifacts:
+          - Name: !Sub "${AppName}-BuildArtifact"
           ActionTypeId:
             Category: Build
             Owner: AWS
             Version: "1"
             Provider: CodeBuild
-          OutputArtifacts:
-          - Name: !Sub "${AppName}-BuildArtifact"
           Configuration:
             ProjectName: !Sub "${AppName}-build"
           RunOrder: 1
@@ -136,13 +136,13 @@ Resources:
         Actions:
         - Name: create-changeset
           InputArtifacts:
-          - Name: !Sub "${AppName}-BuildArtifact"
+          - Name: !Sub "${AppName}-BuildArtifact"  
+          OutputArtifacts: []
           ActionTypeId:
             Category: Deploy
             Owner: AWS
             Version: "1"
             Provider: CloudFormation
-          OutputArtifacts: []
           Configuration:
             StackName: !Sub "${AppName}-app-stack"
             ActionMode: CHANGE_SET_REPLACE
@@ -154,12 +154,12 @@ Resources:
           RunOrder: 1
         - Name: execute-changeset
           InputArtifacts: []
+          OutputArtifacts: []
           ActionTypeId:
             Category: Deploy
             Owner: AWS
             Version: "1"
             Provider: CloudFormation
-          OutputArtifacts: []
           Configuration:
             StackName: !Sub "${AppName}-app-stack"
             ActionMode: CHANGE_SET_EXECUTE
