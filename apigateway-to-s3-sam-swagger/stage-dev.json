@@ -1,0 +1,7 @@
+{
+  "Parameters": {
+    "AppName": "upload-event-logger-dev",
+    "BucketName": "ttulka-upload-bucket-dev",
+    "StageName": "DEV"
+  }
+}

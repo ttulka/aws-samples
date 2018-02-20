@@ -1,0 +1,108 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: API Gateway to upload files into a S3 Bucket
+
+Parameters:
+  AppName:
+    Description: "Application name"
+    Type: "String"
+  BucketName:
+    Description: "S3 bucket name"
+    Type: "String"
+  StageName:
+    Description: "Stage name"
+    Type: "String"
+
+Resources:
+  Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketName
+
+  BucketApiGatewayApi:
+    Type: AWS::Serverless::Api
+    DependsOn: BucketApiGatewayPolicy
+    Properties:
+      StageName: !Ref StageName
+      DefinitionBody:
+        swagger: 2.0
+        info:
+          version: 1.0.0
+          title: !Sub "${AppName}-apigateway-${StageName}"
+        basePath: /s3
+        schemes:
+        - https
+        paths:
+          '/upload/{filename}':
+            put:
+              produces:
+              - application/json
+              parameters:
+              - name: "filename"
+                in: path
+                required: true
+                type: string
+              - name: "Content-Type"
+                in: header
+                required: false
+                type: string
+              responses:
+                '200':
+                  description: "200 response"
+                  headers:
+                    Content-Type:
+                      type: string
+                    Content-Length:
+                      type: string
+              x-amazon-apigateway-integration:
+                responses:
+                  default:
+                    statusCode: '200'
+                requestParameters:
+                  integration.request.path.object: "method.request.path.filename"
+                  integration.request.header.x-amz-acl: "'authenticated-read'"
+                  integration.request.header.Content-Type: "method.request.header.Content-Type"
+                responseParameters:
+                  method.response.header.Content-Type: "integration.response.header.Content-Type"
+                  method.response.header.Content-Length: "integration.response.header.Content-Length"
+                uri: !Sub "arn:aws:apigateway:${AWS::Region}:s3:path/${BucketName}/{object}"
+                credentials: !GetAtt BucketApiGatewayRole.Arn
+                passthroughBehavior: when_no_match
+                httpMethod: PUT
+                type: AWS
+
+  BucketApiGatewayRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AppName}-apigateway-role"
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [s3.amazonaws.com, apigateway.amazonaws.com]
+          Action: sts:AssumeRole
+      Path: /
+
+  BucketApiGatewayPolicy:
+    Type: AWS::IAM::Policy
+    DependsOn: BucketApiGatewayRole
+    Properties:
+      PolicyName: BucketApiGatewayPolicy
+      PolicyDocument:
+        Statement:
+        - Action: ["s3:*"]
+          Resource: !Sub "arn:aws:s3:::${BucketName}/*"
+          Effect: Allow
+      Roles: [!Ref BucketApiGatewayRole]
+
+Outputs:
+  ApiUrl:
+    Description: URL of your API endpoint
+    Value: !Join
+      - ''
+      - - https://
+        - !Ref BucketApiGatewayApi
+        - '.execute-api.'
+        - !Ref 'AWS::Region'
+        - '.amazonaws.com/'
+        - !Ref StageName
