@@ -1,0 +1,97 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "QA + PROD Account."
+Parameters:
+  ProjectName:
+    Type: String
+    Description: Name of the application.
+    MinLength: "1"
+    MaxLength: "80"
+    AllowedPattern: "[A-Za-z0-9-]+"
+    ConstraintDescription: Malformed input parameter. ProjectName must only contain upper and lower case letters, numbers, and -.
+    Default: testapp
+  CIAccountId:
+    Type: String
+    Description: ARN of the CI Account
+    AllowedPattern: "[0-9]+"
+    ConstraintDescription: Account ID is a number
+    Default: 456158573912
+  KMSKey:
+    Type: String
+    Description: ARN of the KMS Key
+
+Resources:
+
+  CrossAccountRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-cross-account-role"
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${CIAccountId}:root"
+            Action: sts:AssumeRole
+
+  CrossAccountPolicy:
+    Type: AWS::IAM::Policy
+    DependsOn: CrossAccountRole
+    Properties:
+      PolicyName: CrossAccountPolicy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - cloudformation:*
+              - codebuild:*
+              - s3:*
+              - iam:PassRole
+            Resource: "*"
+          - Effect: Allow
+            Action: ["kms:Decrypt", "kms:Encrypt"]
+            Resource: !Ref KMSKey
+      Roles: [!Ref CrossAccountRole]
+
+  CloudFormationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-cloudformation-role"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [cloudformation.amazonaws.com]
+          Action: sts:AssumeRole
+
+  CloudFormationPolicy:
+    Type: AWS::IAM::Policy
+    DependsOn: CloudFormationRole
+    Properties:
+      PolicyName: CloudFormationPolicy
+      PolicyDocument:
+        Statement:
+        - Action: ["s3:*"]
+          Resource: "*"
+          Effect: Allow
+        - Action: ["lambda:*"]
+          Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:*"
+          Effect: Allow
+        - Action: ["apigateway:*"]
+          Resource: !Sub "arn:aws:apigateway:${AWS::Region}::/restapis*"
+          Effect: Allow
+        - Action: ["iam:GetRole", "iam:CreateRole", "iam:DeleteRole", "iam:AttachRolePolicy", "iam:DetachRolePolicy", "iam:DeleteRolePolicy", "iam:PutRolePolicy", "iam:PassRole"]
+          Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/${ProjectName}*"
+          Effect: Allow
+        - Action: ["cloudformation:CreateChangeSet"]
+          Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:aws:transform/*"
+          Effect: Allow
+        - Action: ["codedeploy:*"]
+          Resource: !Sub "arn:aws:codedeploy:${AWS::Region}:${AWS::AccountId}:*:${ProjectName}*"
+          Effect: Allow
+        - Action: ["codedeploy:GetDeploymentConfig"]
+          Resource: !Sub "arn:aws:codedeploy:${AWS::Region}:${AWS::AccountId}:deploymentconfig:*"
+          Effect: Allow
+      Roles: [!Ref CloudFormationRole]

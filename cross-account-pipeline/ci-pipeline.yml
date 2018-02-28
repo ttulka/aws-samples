@@ -1,0 +1,430 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Main CI/CD Pipeline."
+Parameters:
+  ProjectName:
+    Type: String
+    Description: Name of the application.
+    MinLength: "1"
+    MaxLength: "80"
+    AllowedPattern: "[A-Za-z0-9-]+"
+    ConstraintDescription: Malformed input parameter. ProjectName must only contain upper and lower case letters, numbers, and -.
+    Default: testapp
+  SAMInputFile:
+    Type: String
+    Description: The filename for the SAM file.
+    Default: sam.yml
+  SAMOutputFile:
+    Type: String
+    Description: The filename for the output SAM file from the buildspec file.
+    Default: template.yml
+  CodeBuildImage:
+    Type: String
+    Default: "aws/codebuild/java:openjdk-8"
+    Description: Image used for CodeBuild project.
+  CodeCommitRepoName:
+    Type: String
+    Description: The CodeCommit repo name
+    Default: testapp
+  CodeCommitRepoBranch:
+    Type: String
+    Description: The CodeCommit repo branch code pipelines should watch for changes on
+    Default: master
+  DevAccountId:
+    Type: String
+    Description: The DEV Account ID
+    AllowedPattern: "[0-9]+"
+    ConstraintDescription: Account ID is a number
+    Default: "057174153981"
+  QaAccountId:
+    Type: String
+    Description: The QA Account ID
+    AllowedPattern: "[0-9]+"
+    ConstraintDescription: Account ID is a number
+    Default: "264548621786"
+  ProdAccountId:
+    Type: String
+    Description: The PROD Account ID
+    AllowedPattern: "[0-9]+"
+    ConstraintDescription: Account ID is a number
+    Default: "499144324255"
+  CrossAccountRolesCreated:
+    Type: String
+    Description: Were all the cross account roles already created?
+    AllowedPattern: "true|false"
+    ConstraintDescription: A boolean value
+    Default: false
+  AddCodeBuildTestRole:
+    Type: String
+    Description: Add the CodeBuild test role to perform integration tests?
+    AllowedPattern: "true|false"
+    ConstraintDescription: A boolean value
+    Default: false
+
+Conditions:
+  AddCrossAccountDependentResources: !Equals [ !Ref CrossAccountRolesCreated, true ]
+
+Resources:
+
+  #####################################################################################
+  #### SECURITY #######################################################################
+  #####################################################################################
+
+  KMSKey:
+    Type: AWS::KMS::Key
+    DependsOn: [CodePipelineRole, CodeBuildRole]
+    Description: Used by Assumed Roles in Dev/Qa/Prod accounts to Encrypt/Decrypt code
+    Properties:
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Id: !Ref AWS::StackName
+        Statement:
+          - Sid: Allows admin of the key
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: ["kms:*"]
+            Resource: "*"
+          - Sid: Allow use of the key
+            Effect: Allow
+            Principal:
+              AWS:
+                - !Sub "arn:aws:iam::${DevAccountId}:root"
+                - !Sub "arn:aws:iam::${QaAccountId}:root"
+                - !Sub "arn:aws:iam::${ProdAccountId}:root"
+                - !GetAtt CodePipelineRole.Arn
+                - !GetAtt CodeBuildRole.Arn
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+              - kms:DescribeKey
+            Resource: "*"
+  KMSAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub alias/codepipeline-crossaccounts
+      TargetKeyId: !Ref KMSKey
+
+  S3ArtifactBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    DependsOn: [S3ArtifactBucket, CodePipelineRole, CodeBuildRole]
+    Condition: AddCrossAccountDependentResources
+    Properties:
+      Bucket: !Ref S3ArtifactBucket
+      PolicyDocument:
+        Statement:
+        - Action: ["s3:*"]
+          Effect: Allow
+          Resource:
+          - !Sub "arn:aws:s3:::${S3ArtifactBucket}"
+          - !Sub "arn:aws:s3:::${S3ArtifactBucket}/*"
+          Principal:
+            AWS:
+            - !GetAtt CodePipelineRole.Arn
+            - !GetAtt CodeBuildRole.Arn
+            - !Sub "arn:aws:iam::${DevAccountId}:role/${ProjectName}-cross-account-role"
+            - !Sub "arn:aws:iam::${DevAccountId}:role/${ProjectName}-cloudformation-role"
+            - !Sub "arn:aws:iam::${DevAccountId}:role/${ProjectName}-codebuild-test-role"
+            - !Sub "arn:aws:iam::${QaAccountId}:role/${ProjectName}-cross-account-role"
+            - !Sub "arn:aws:iam::${QaAccountId}:role/${ProjectName}-cloudformation-role"
+            - !Sub "arn:aws:iam::${ProdAccountId}:role/${ProjectName}-cross-account-role"
+            - !Sub "arn:aws:iam::${ProdAccountId}:role/${ProjectName}-cloudformation-role"
+
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-codebuild-role"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [codebuild.amazonaws.com]
+          Action: sts:AssumeRole
+
+  CodeBuildPolicy:
+    Type: AWS::IAM::Policy
+    DependsOn: [CodeBuildRole, KMSKey]
+    Properties:
+      PolicyName: CodeBuildPolicy
+      PolicyDocument:
+        Statement:
+        - Action: ["s3:*"]
+          Resource: "*"
+          Effect: Allow
+        - Action: ["logs:CreateLogStream", "logs:PutLogEvents", "logs:CreateLogGroup"]
+          Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${ProjectName}*"
+          Effect: Allow
+        - Action: ["kms:Decrypt", "kms:Encrypt"]
+          Resource: !GetAtt KMSKey.Arn
+          Effect: Allow
+      Roles: [!Ref CodeBuildRole]
+
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-codepipeline-role"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [codepipeline.amazonaws.com]
+          Action: sts:AssumeRole
+
+  CodePipelinePolicy:
+    Type: AWS::IAM::Policy
+    DependsOn: [CodePipelineRole, KMSKey]
+    Condition: AddCrossAccountDependentResources
+    Properties:
+      PolicyName: CodePipelinePolicy
+      PolicyDocument:
+        Statement:
+        - Action: ["s3:*"]
+          Resource: "*"
+          Effect: Allow
+        - Action: ["codecommit:CancelUploadArchive", "codecommit:GetBranch", "codecommit:GetCommit", "codecommit:GetUploadArchiveStatus", "codecommit:UploadArchive"]
+          Resource: !Sub "arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${CodeCommitRepoName}"
+          Effect: Allow
+        - Action: ["codebuild:StartBuild", "codebuild:BatchGetBuilds"]
+          Resource: !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/${ProjectName}*"
+          Effect: Allow
+        - Action: ["cloudformation:DescribeStacks", "cloudformation:DescribeChangeSet", "cloudformation:CreateChangeSet", "cloudformation:ExecuteChangeSet", "cloudformation:DeleteChangeSet"]
+          Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${ProjectName}-app-stack*/*"
+          Effect: Allow
+        - Action: ["iam:PassRole", "iam:ListRoles"]   ### REMOVE???
+          Resource: "*"
+          Effect: Allow
+        - Action: ["sts:AssumeRole"]
+          Resource:
+            - !Sub "arn:aws:iam::${DevAccountId}:role/${ProjectName}-*"
+            - !Sub "arn:aws:iam::${QaAccountId}:role/${ProjectName}-*"
+            - !Sub "arn:aws:iam::${ProdAccountId}:role/${ProjectName}-*"
+          Effect: Allow
+        - Action: ["kms:Decrypt", "kms:Encrypt"]
+          Resource: !GetAtt KMSKey.Arn
+          Effect: Allow
+      Roles: [!Ref CodePipelineRole]
+
+  #####################################################################################
+  #### PIPELINE #######################################################################
+  #####################################################################################
+
+  S3ArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      BucketName: !Sub "ttulka-pipeline-${ProjectName}"
+
+  CodeBuild:
+    Type: AWS::CodeBuild::Project
+    DependsOn: [S3ArtifactBucket, CodeBuildRole]
+    Properties:
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        EnvironmentVariables:
+        - Name: S3_BUCKET
+          Value: !Ref S3ArtifactBucket
+        Image: !Ref CodeBuildImage
+        Type: LINUX_CONTAINER
+      Name: !Sub "${ProjectName}-codebuild-build"
+      ServiceRole: !Ref CodeBuildRole
+      EncryptionKey: !GetAtt KMSKey.Arn
+      Source:
+        Type: CODEPIPELINE
+      Tags:
+        - Key: app-name
+          Value: !Ref ProjectName
+      TimeoutInMinutes: 5
+
+  CodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    DependsOn: [CodePipelineRole, CodePipelinePolicy, CodeBuild]
+    Condition: AddCrossAccountDependentResources
+    Properties:
+      Name: !Sub "${ProjectName}-pipeline"
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      RestartExecutionOnUpdate: true
+      Stages:
+      - Name: Source
+        Actions:
+        - Name: get-source-code
+          InputArtifacts: []
+          OutputArtifacts:
+          - Name: !Sub "${ProjectName}-SourceArtifact"
+          ActionTypeId:
+            Category: Source
+            Owner: AWS
+            Provider: CodeCommit
+            Version: "1"
+          Configuration:
+            RepositoryName: !Ref CodeCommitRepoName
+            BranchName: !Ref CodeCommitRepoBranch
+          RunOrder: 1
+      - Name: Build
+        Actions:
+        - Name: build-from-source
+          InputArtifacts:
+          - Name: !Sub "${ProjectName}-SourceArtifact"
+          OutputArtifacts:
+          - Name: !Sub "${ProjectName}-BuildArtifact"
+          ActionTypeId:
+            Category: Build
+            Owner: AWS
+            Version: "1"
+            Provider: CodeBuild
+          Configuration:
+            ProjectName: !Ref CodeBuild
+          RunOrder: 1
+      - Name: StagingDev
+        Actions:
+        - Name: create-changeset
+          InputArtifacts:
+          - Name: !Sub "${ProjectName}-BuildArtifact"
+          OutputArtifacts: []
+          ActionTypeId:
+            Category: Deploy
+            Owner: AWS
+            Version: "1"
+            Provider: CloudFormation
+          Configuration:
+            StackName: !Sub "${ProjectName}-app-stack-dev"
+            ActionMode: CHANGE_SET_REPLACE
+            ChangeSetName: app-changeset-dev
+            Capabilities: CAPABILITY_NAMED_IAM
+            TemplatePath: !Sub "${ProjectName}-BuildArtifact::${SAMOutputFile}"
+            TemplateConfiguration: !Sub "${ProjectName}-BuildArtifact::stage-dev.json"
+            RoleArn: !Sub "arn:aws:iam::${DevAccountId}:role/${ProjectName}-cloudformation-role"
+          RoleArn: !Sub "arn:aws:iam::${DevAccountId}:role/${ProjectName}-cross-account-role"
+          RunOrder: 1
+        - Name: execute-changeset
+          InputArtifacts: []
+          OutputArtifacts: []
+          ActionTypeId:
+            Category: Deploy
+            Owner: AWS
+            Version: "1"
+            Provider: CloudFormation
+          Configuration:
+            StackName: !Sub "${ProjectName}-app-stack-dev"
+            ActionMode: CHANGE_SET_EXECUTE
+            ChangeSetName: app-changeset-dev
+            RoleArn: !Sub "arn:aws:iam::${DevAccountId}:role/${ProjectName}-cloudformation-role"
+          RoleArn: !Sub "arn:aws:iam::${DevAccountId}:role/${ProjectName}-cross-account-role"
+          RunOrder: 2
+      - Name: IntegrationTest
+        Actions:
+        - Name: run-tests
+          InputArtifacts:
+          - Name: !Sub "${ProjectName}-SourceArtifact"
+          OutputArtifacts: []
+          ActionTypeId:
+            Category: Test
+            Owner: AWS
+            Version: "1"
+            Provider: CodeBuild
+          Configuration:
+            ProjectName: !Sub "${ProjectName}-codebuild-test"
+          RoleArn: !Sub "arn:aws:iam::${DevAccountId}:role/${ProjectName}-cross-account-role"
+          RunOrder: 1
+      - Name: StagingQA
+        Actions:
+        - Name: create-changeset
+          InputArtifacts:
+          - Name: !Sub "${ProjectName}-BuildArtifact"
+          OutputArtifacts: []
+          ActionTypeId:
+            Category: Deploy
+            Owner: AWS
+            Version: "1"
+            Provider: CloudFormation
+          Configuration:
+            StackName: !Sub "${ProjectName}-app-stack-qa"
+            ActionMode: CHANGE_SET_REPLACE
+            RoleArn: !Ref CloudformationRole
+            ChangeSetName: app-changeset-qa
+            Capabilities: CAPABILITY_NAMED_IAM
+            TemplatePath: !Sub "${ProjectName}-BuildArtifact::${SAMOutputFile}"
+            TemplateConfiguration: !Sub "${ProjectName}-BuildArtifact::stage-qa.json"
+            RoleArn: !Sub "arn:aws:iam::${QaAccountId}:role/${ProjectName}-cloudformation-role"
+          RoleArn: !Sub "arn:aws:iam::${QaAccountId}:role/${ProjectName}-cross-account-role"
+          RunOrder: 1
+        - Name: execute-changeset
+          InputArtifacts: []
+          OutputArtifacts: []
+          ActionTypeId:
+            Category: Deploy
+            Owner: AWS
+            Version: "1"
+            Provider: CloudFormation
+          Configuration:
+            StackName: !Sub "${ProjectName}-app-stack-qa"
+            ActionMode: CHANGE_SET_EXECUTE
+            ChangeSetName: app-changeset-qa
+            RoleArn: !Sub "arn:aws:iam::${QaAccountId}:role/${ProjectName}-cloudformation-role"
+          RoleArn: !Sub "arn:aws:iam::${QaAccountId}:role/${ProjectName}-cross-account-role"
+          RunOrder: 2
+      - Name: Approval
+        Actions:
+        - Name: manual-approval
+          InputArtifacts: []
+          OutputArtifacts: []
+          ActionTypeId:
+            Category: Approval
+            Owner: AWS
+            Version: "1"
+            Provider: Manual
+          Configuration:
+            CustomData: "After the approval will be deployed into the production."
+      - Name: StagingProd
+        Actions:
+        - Name: create-changeset
+          InputArtifacts:
+          - Name: !Sub "${ProjectName}-BuildArtifact"
+          OutputArtifacts: []
+          ActionTypeId:
+            Category: Deploy
+            Owner: AWS
+            Version: "1"
+            Provider: CloudFormation
+          Configuration:
+            StackName: !Sub "${ProjectName}-app-stack-prod"
+            ActionMode: CHANGE_SET_REPLACE
+            RoleArn: !Ref CloudformationRole
+            ChangeSetName: app-changeset-prod
+            Capabilities: CAPABILITY_NAMED_IAM
+            TemplatePath: !Sub "${ProjectName}-BuildArtifact::${SAMOutputFile}"
+            TemplateConfiguration: !Sub "${ProjectName}-BuildArtifact::stage-prod.json"
+            RoleArn: !Sub "arn:aws:iam::${ProdAccountId}:role/${ProjectName}-cloudformation-role"
+          RoleArn: !Sub "arn:aws:iam::${ProdAccountId}:role/${ProjectName}-cross-account-role"
+          RunOrder: 1
+        - Name: execute-changeset
+          InputArtifacts: []
+          OutputArtifacts: []
+          ActionTypeId:
+            Category: Deploy
+            Owner: AWS
+            Version: "1"
+            Provider: CloudFormation
+          Configuration:
+            StackName: !Sub "${ProjectName}-app-stack-prod"
+            ActionMode: CHANGE_SET_EXECUTE
+            ChangeSetName: app-changeset-prod
+            RoleArn: !Sub "arn:aws:iam::${ProdAccountId}:role/${ProjectName}-cloudformation-role"
+          RoleArn: !Sub "arn:aws:iam::${ProdAccountId}:role/${ProjectName}-cross-account-role"
+          RunOrder: 2
+      ArtifactStore:
+        Type: S3
+        Location: !Ref S3ArtifactBucket
+        EncryptionKey:
+          Id: !Ref KMSKey
+          Type: KMS
+
+Outputs:
+  KMSKey:
+    Description: "KMS Key for code pipeline"
+    Value: !GetAtt KMSKey.Arn
