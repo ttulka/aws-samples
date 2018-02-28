@@ -1,3 +1,27 @@
+```
+ CI   |  DEV  |  QA  |  PROD
+      |       |      |
++--+  |       |      |
+|CC|  |       |      |
++--+  |       |      |
+ |    |       |      |
+ V    |       |      |
++--+  | +--+  |      |
+|CB| -> |CF|  |      |
++--+  | +--+  |      |
+      |  |    |      |
+      |  V    |      |
+      | +--+  | +--+ |
+      | |IT| -> |CF| |
+      | +--+  | +--+ |
+      |       |  |   |
+      |       |  V   |
+      |       | +--+ |  +--+
+      |       | |?| -> |CF|
+      |       | +--+ |  +--+
+```
+
+
 1. Create a stack in the *CI* account `testapp-pipeline-stack`
 - leave all the values as default
 
