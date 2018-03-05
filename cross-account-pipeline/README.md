@@ -25,7 +25,7 @@
 1. Create a stack in the *CI* account `testapp-pipeline-stack`
 - leave all the values as default
 
-2. Create stacks for the *DEV*, *QA* and *PROD* accounts
+2. Create stacks in the *DEV*, *QA* and *PROD* accounts
 - `testapp-dev-stack`
 - `testapp-qa-stack`
 - `testapp-prod-stack`
