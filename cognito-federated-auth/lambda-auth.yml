@@ -3,6 +3,9 @@ Description: "Lambda Authorization"
 
 Parameters:
 
+  S3BucketArtifacts:
+    Type: String
+    Description: S3 Bucket with Artifacts.
   UserPoolId:
     Type: String
     Description: User Pool Id.
@@ -12,9 +15,6 @@ Parameters:
   FederatedPoolId:
     Type: String
     Description: Federated Pool Id.
-  CustomDomain:
-    Type: String
-    Description: Custom Domain.
 
 Resources:
 
@@ -30,14 +30,13 @@ Resources:
       Runtime: java8
       Handler: cz.net21.ttulka.aws.lambda.auth.UserValidator
       Code:
-        S3Bucket: ttulka-artifacts
+        S3Bucket: !Ref S3BucketArtifacts
         S3Key: AuthenticationLambda-1.0.0-SNAPSHOT.jar
       Environment:
         Variables:
           POOL_ID: !Ref UserPoolId
           CLIENT_APP_ID: !Ref ClientAppId
           FEDERARED_POOL_ID: !Ref FederatedPoolId
-          CUSTOM_DOMAIN: !Ref CustomDomain
           REGION: !Ref AWS::Region
 
 #  CognitoUserValidationPermission:
