@@ -1,0 +1,399 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Cognito User Pool"
+
+Parameters:
+
+  ProjectName:
+    Type: String
+    Description: Name of the application.
+    MinLength: "1"
+    MaxLength: "80"
+    AllowedPattern: "[A-Za-z0-9-]+"
+    ConstraintDescription: Malformed input parameter. ProjectName must only contain upper and lower case letters, numbers, and -.
+    Default: test
+
+Resources:
+
+  CognitoUserPool:
+    Type: AWS::Cognito::UserPool
+    DependsOn: LambdaPreSignUpAutoconfirm
+    Properties:
+      AdminCreateUserConfig:
+        InviteMessageTemplate:
+          EmailMessage: 'Your username is {username} and temporary password is {####}. '
+          EmailSubject: Your temporary password
+          SMSMessage: 'Your username is {username} and temporary password is {####}. '
+        UnusedAccountValidityDays: 7
+        AllowAdminCreateUserOnly: false
+      # see https://forums.aws.amazon.com/thread.jspa?threadID=259349&tstart=0
+      AliasAttributes:
+      - email
+      AutoVerifiedAttributes:
+      - email
+      EmailVerificationMessage: 'Your verification code is {####}. '
+      EmailVerificationSubject: Your verification code
+      LambdaConfig:
+        PreSignUp: !GetAtt LambdaPreSignUpAutoconfirm.Arn
+      MfaConfiguration: 'OFF'
+      Policies:
+        PasswordPolicy:
+          RequireLowercase: true
+          RequireSymbols: true
+          RequireNumbers: true
+          MinimumLength: 8
+          RequireUppercase: true
+      UserPoolName: !Sub "${ProjectName}-user-pool"
+      Schema:
+      - Name: sub
+        StringAttributeConstraints:
+          MinLength: '1'
+          MaxLength: '2048'
+        DeveloperOnlyAttribute: false
+        Required: true
+        AttributeDataType: String
+        Mutable: false
+      - Name: name
+        StringAttributeConstraints:
+          MinLength: '0'
+          MaxLength: '2048'
+        DeveloperOnlyAttribute: false
+        Required: false
+        AttributeDataType: String
+        Mutable: true
+      - Name: given_name
+        StringAttributeConstraints:
+          MinLength: '0'
+          MaxLength: '2048'
+        DeveloperOnlyAttribute: false
+        Required: true
+        AttributeDataType: String
+        Mutable: true
+      - Name: family_name
+        StringAttributeConstraints:
+          MinLength: '0'
+          MaxLength: '2048'
+        DeveloperOnlyAttribute: false
+        Required: true
+        AttributeDataType: String
+        Mutable: true
+      - Name: middle_name
+        StringAttributeConstraints:
+          MinLength: '0'
+          MaxLength: '2048'
+        DeveloperOnlyAttribute: false
+        Required: false
+        AttributeDataType: String
+        Mutable: true
+      - Name: nickname
+        StringAttributeConstraints:
+          MinLength: '0'
+          MaxLength: '2048'
+        DeveloperOnlyAttribute: false
+        Required: false
+        AttributeDataType: String
+        Mutable: true
+      - Name: preferred_username
+        StringAttributeConstraints:
+          MinLength: '0'
+          MaxLength: '2048'
+        DeveloperOnlyAttribute: false
+        Required: false
+        AttributeDataType: String
+        Mutable: true
+      - Name: profile
+        StringAttributeConstraints:
+          MinLength: '0'
+          MaxLength: '2048'
+        DeveloperOnlyAttribute: false
+        Required: false
+        AttributeDataType: String
+        Mutable: true
+      - Name: picture
+        StringAttributeConstraints:
+          MinLength: '0'
+          MaxLength: '2048'
+        DeveloperOnlyAttribute: false
+        Required: false
+        AttributeDataType: String
+        Mutable: true
+      - Name: website
+        StringAttributeConstraints:
+          MinLength: '0'
+          MaxLength: '2048'
+        DeveloperOnlyAttribute: false
+        Required: false
+        AttributeDataType: String
+        Mutable: true
+      - Name: email
+        StringAttributeConstraints:
+          MinLength: '0'
+          MaxLength: '2048'
+        DeveloperOnlyAttribute: false
+        Required: true
+        AttributeDataType: String
+        Mutable: false
+      - AttributeDataType: Boolean
+        DeveloperOnlyAttribute: false
+        Required: false
+        Name: email_verified
+        Mutable: true
+      - Name: gender
+        StringAttributeConstraints:
+          MinLength: '0'
+          MaxLength: '2048'
+        DeveloperOnlyAttribute: false
+        Required: false
+        AttributeDataType: String
+        Mutable: true
+      - Name: birthdate
+        StringAttributeConstraints:
+          MinLength: '10'
+          MaxLength: '10'
+        DeveloperOnlyAttribute: false
+        Required: false
+        AttributeDataType: String
+        Mutable: true
+      - Name: zoneinfo
+        StringAttributeConstraints:
+          MinLength: '0'
+          MaxLength: '2048'
+        DeveloperOnlyAttribute: false
+        Required: false
+        AttributeDataType: String
+        Mutable: true
+      - Name: locale
+        StringAttributeConstraints:
+          MinLength: '0'
+          MaxLength: '2048'
+        DeveloperOnlyAttribute: false
+        Required: false
+        AttributeDataType: String
+        Mutable: true
+      - Name: phone_number
+        StringAttributeConstraints:
+          MinLength: '0'
+          MaxLength: '2048'
+        DeveloperOnlyAttribute: false
+        Required: false
+        AttributeDataType: String
+        Mutable: true
+      - Name: address
+        StringAttributeConstraints:
+          MinLength: '0'
+          MaxLength: '2048'
+        DeveloperOnlyAttribute: false
+        Required: false
+        AttributeDataType: String
+        Mutable: true
+      - Name: updated_at
+        NumberAttributeConstraints:
+          MinValue: '0'
+        DeveloperOnlyAttribute: false
+        Required: false
+        AttributeDataType: Number
+        Mutable: true
+      - Name: tenantId
+        StringAttributeConstraints:
+          MinLength: '1'
+          MaxLength: '256'
+        DeveloperOnlyAttribute: false
+        Required: false
+        AttributeDataType: String
+        Mutable: true
+      SmsAuthenticationMessage: 'Your authentication code is {####}. '
+
+  CognitoUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    DependsOn: CognitoUserPool
+    Properties:
+      ClientName: !Sub "${ProjectName}-user-pool-client"
+      UserPoolId: !Ref CognitoUserPool
+      RefreshTokenValidity: 30
+      GenerateSecret: false
+      ReadAttributes:
+      - address
+      - birthdate
+      - custom:tenantId
+      - email
+      - email_verified
+      - family_name
+      - gender
+      - given_name
+      - locale
+      - middle_name
+      - name
+      - nickname
+      - phone_number
+      - phone_number_verified
+      - picture
+      - preferred_username
+      - profile
+      - updated_at
+      - website
+      - zoneinfo
+      WriteAttributes:
+      - address
+      - birthdate
+      - custom:tenantId
+      - email
+      - family_name
+      - gender
+      - given_name
+      - locale
+      - middle_name
+      - name
+      - nickname
+      - phone_number
+      - picture
+      - preferred_username
+      - profile
+      - updated_at
+      - website
+      - zoneinfo
+
+  CognitoIdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: !Sub "${ProjectName}_idp"
+      AllowUnauthenticatedIdentities: false
+      CognitoIdentityProviders:
+      - ServerSideTokenCheck: true
+        ClientId: !Ref CognitoUserPoolClient
+        ProviderName: !GetAtt CognitoUserPool.ProviderName
+
+  CognitoUnauthenticatedRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub Cognito_${CognitoIdentityPool.Name}_Unauth_Role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+            Action: ["sts:AssumeRoleWithWebIdentity"]
+      Policies:
+        - PolicyName: cognitounauth
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                - mobileanalytics:PutEvents
+                - cognito-sync:*
+                Resource:
+                - "*"
+  CognitoAuthenticatedRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub Cognito_${CognitoIdentityPool.Name}_Auth_Role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+            Action: ["sts:AssumeRoleWithWebIdentity"]
+      Policies:
+        - PolicyName: cognitoauth
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                - mobileanalytics:PutEvents
+                - cognito-sync:*
+                - execute-api:*
+                Resource:
+                - "*"
+  CognitoIdentityPoolRoleAttachment:
+    Type: AWS::Cognito::IdentityPoolRoleAttachment
+    DependsOn: [ CognitoIdentityPool, CognitoUnauthenticatedRole, CognitoAuthenticatedRole ]
+    Properties:
+      IdentityPoolId: !Ref CognitoIdentityPool
+      Roles:
+        authenticated: !GetAtt CognitoAuthenticatedRole.Arn
+        unauthenticated: !GetAtt CognitoUnauthenticatedRole.Arn
+
+  LambdaPreSignUpAutoconfirm:
+    Type: AWS::Lambda::Function
+    DependsOn: [LambdaPreSignUpAutoconfirmRole]
+    Properties:
+      FunctionName: !Sub "${ProjectName}-cognito-pre-sign-up-autoconfirm"
+      Description: "Lambda trigger to confirm a new created user."
+      Role: !GetAtt LambdaPreSignUpAutoconfirmRole.Arn
+      MemorySize: 128
+      Timeout: 30
+      Runtime: nodejs6.10
+      Handler: index.handler
+      Code:
+        ZipFile: >
+          'use strict';
+
+          exports.handler = (event, context, callback) => {
+            console.log('Trigger source: ' + event.triggerSource);
+            console.log('Received event:', JSON.stringify(event, null, 2))
+
+            event.response.autoConfirmUser = true;
+            console.log('Auto confirmed user');
+
+            if (event.request.userAttributes != null) {
+              if (event.request.userAttributes.hasOwnProperty("email")) {
+                event.response.autoVerifyEmail = true;
+                console.log('Set email verified');
+              }
+
+              if (event.request.userAttributes.hasOwnProperty("phone_number")) {
+                event.response.autoVerifyPhone = true;
+                console.log('Set phone_number verified');
+              }
+            }
+
+            callback(null, event)
+          };
+
+  LambdaPreSignUpAutoconfirmPolicy:
+    Type: AWS::IAM::Policy
+    DependsOn: LambdaPreSignUpAutoconfirmRole
+    Properties:
+      PolicyName: LambdaPreSignUpAutoconfirmPolicy
+      PolicyDocument:
+        Statement:
+        - Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
+          Effect: Allow
+          Resource: "arn:aws:logs:*:*:*"
+      Roles: [!Ref LambdaPreSignUpAutoconfirmRole]
+
+  LambdaPreSignUpAutoconfirmRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-lambda-cognito-pre-sign-up-autoconfirm-role"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [lambda.amazonaws.com]
+          Action: sts:AssumeRole
+
+  LambdaPreSignUpAutoconfirmPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn: [LambdaPreSignUpAutoconfirm, CognitoUserPool]
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt LambdaPreSignUpAutoconfirm.Arn
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt CognitoUserPool.Arn
+
+Outputs:
+  UserPool:
+    Description: "Cognito User Pool"
+    Value: !Ref CognitoUserPool
+  ClientId:
+    Description: "Client Id for the User Pool"
+    Value: !Ref CognitoUserPoolClient
+  IdentityPool:
+    Description: "Identity Pool Id"
+    Value: !Ref CognitoIdentityPool
+
+

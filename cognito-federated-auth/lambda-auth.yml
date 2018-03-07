@@ -1,0 +1,177 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Lambda Authorization"
+
+Parameters:
+
+  UserPoolId:
+    Type: String
+    Description: User Pool Id.
+  ClientAppId:
+    Type: String
+    Description: Client App Id.
+  FederatedPoolId:
+    Type: String
+    Description: Federated Pool Id.
+  CustomDomain:
+    Type: String
+    Description: Custom Domain.
+
+Resources:
+
+  CognitoUserValidationLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: CognitoUserValidationRole
+    Properties:
+      FunctionName: cognito-user-validation
+      Description: "Lambda Auth"
+      Role: !GetAtt CognitoUserValidationRole.Arn
+      MemorySize: 3008
+      Timeout: 30
+      Runtime: java8
+      Handler: cz.net21.ttulka.aws.lambda.auth.UserValidator
+      Code:
+        S3Bucket: ttulka-artifacts
+        S3Key: AuthenticationLambda-1.0.0-SNAPSHOT.jar
+      Environment:
+        Variables:
+          POOL_ID: !Ref UserPoolId
+          CLIENT_APP_ID: !Ref ClientAppId
+          FEDERARED_POOL_ID: !Ref FederatedPoolId
+          CUSTOM_DOMAIN: !Ref CustomDomain
+          REGION: !Ref AWS::Region
+
+#  CognitoUserValidationPermission:
+#    Type: AWS::Lambda::Permission
+#    DependsOn: [CognitoUserValidationLambda, CognitoUserValidationApi]
+#    Properties:
+#      Action: lambda:InvokeFunction
+#      FunctionName: !GetAtt CognitoUserValidationLambda.Arn
+#      Principal: apigateway.amazonaws.com
+#      SourceArn: !GetAtt CognitoUserValidationApi.Arn
+
+  CognitoUserValidationPolicy:
+    Type: AWS::IAM::Policy
+    DependsOn: CognitoUserValidationRole
+    Properties:
+      PolicyName: CognitoUserValidationPolicy
+      PolicyDocument:
+        Statement:
+        - Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
+          Effect: Allow
+          Resource: "arn:aws:logs:*:*:*"
+      Roles: [!Ref CognitoUserValidationRole]
+
+  CognitoUserValidationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: lambda-cognito-user-validation-role
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [lambda.amazonaws.com]
+          Action: sts:AssumeRole
+
+  CognitoUserValidationApi:
+    Type: AWS::ApiGateway::RestApi
+    DependsOn: CognitoUserValidationLambda
+    Properties:
+      Name: cognito-user-validation-api
+      Body:
+        swagger: 2.0
+        info:
+          title: cognito-user-validation-api
+        basePath: "/cognito-user-validation"
+        schemes:
+        - "https"
+        paths:
+          /:
+            post:
+              produces:
+              - "application/json"
+              responses:
+                "200":
+                  schema:
+                    $ref: "#/definitions/Empty"
+                "400":
+                  schema:
+                    $ref: "#/definitions/Error"
+              x-amazon-apigateway-integration:
+                responses:
+                  default:
+                    statusCode: "200"
+                  .*error.*:
+                    statusCode: "400"
+                    responseTemplates:
+                      application/json: |-
+                        #set ($errorMessageObj = $util.parseJson($input.path('$.errorMessage')))
+                        {
+                          "type" : "BadRequest",
+                          "message" : "$errorMessageObj.message"
+                        }
+                uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:cognito-user-validation/invocations"
+                passthroughBehavior: "when_no_match"
+                httpMethod: "POST"
+                contentHandling: "CONVERT_TO_TEXT"
+                type: "aws"
+                credentials: !GetAtt CognitoUserValidationApiRole.Arn
+        definitions:
+          Empty:
+            type: object
+          Error:
+            type: object
+            properties:
+              type:
+                type: string
+              message:
+                type: string
+
+
+  CognitoUserValidationApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: CognitoUserValidationApi
+    Properties:
+      RestApiId: !Ref CognitoUserValidationApi
+      StageName: prod
+
+  CognitoUserValidationApiPolicy:
+    Type: AWS::IAM::Policy
+    DependsOn: CognitoUserValidationApiRole
+    Properties:
+      PolicyName: CognitoUserValidationApiPolicy
+      PolicyDocument:
+        Statement:
+        - Action: ["lambda:invoke*"]
+          Resource: arn:aws:lambda:*
+          Effect: Allow
+        - Action: ["cloudwatch:*"]
+          Resource: "arn:aws:cloudwatch:*"
+          Effect: Allow
+      Roles: [!Ref CognitoUserValidationApiRole]
+
+  CognitoUserValidationApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: cognito-user-validation-role
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service:
+            - apigateway.amazonaws.com
+      Path: "/"
+
+Outputs:
+  ApiUrl:
+    Description: URL of the API endpoint
+    Value:
+      Fn::Join:
+      - ''
+      - - https://
+        - !Ref CognitoUserValidationApi
+        - ".execute-api."
+        - !Ref AWS::Region
+        - ".amazonaws.com/"
+        - prod

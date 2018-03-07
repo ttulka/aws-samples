@@ -1,0 +1,138 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Lambda Hello World!"
+
+Resources:
+
+  HelloworldLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: HelloworldLambdaRole
+    Properties:
+      FunctionName: helloworld
+      Description: "Lambda says Hello World!"
+      Role: !GetAtt HelloworldLambdaRole.Arn
+      MemorySize: 128
+      Timeout: 30
+      Runtime: nodejs6.10
+      Handler: index.handler
+      Code:
+        ZipFile: >
+          exports.handler = (event, context, callback) => {
+            callback(null, "Hello World!")
+          };
+
+  HelloworldLambdaPolicy:
+    Type: AWS::IAM::Policy
+    DependsOn: HelloworldLambdaRole
+    Properties:
+      PolicyName: HelloworldLambdaPolicy
+      PolicyDocument:
+        Statement:
+        - Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
+          Effect: Allow
+          Resource: "arn:aws:logs:*:*:*"
+      Roles: [!Ref HelloworldLambdaRole]
+
+  HelloworldLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: lambda-helloworld-role
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [lambda.amazonaws.com]
+          Action: sts:AssumeRole
+
+  HelloworldApi:
+    Type: AWS::ApiGateway::RestApi
+    DependsOn: HelloworldLambda
+    Properties:
+      Name: helloworld-api
+      Body:
+        swagger: 2.0
+        info:
+          title: helloworld-api
+        basePath: "/helloworld"
+        schemes:
+        - "https"
+        paths:
+          /:
+            get:
+              produces:
+              - "application/json"
+              responses:
+                "200":
+                  description: "200 response"
+                  schema:
+                    $ref: "#/definitions/Empty"
+              security:
+              - sigv4: []
+              x-amazon-apigateway-integration:
+                responses:
+                  default:
+                    statusCode: "200"
+                uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:helloworld/invocations"
+                passthroughBehavior: "when_no_match"
+                httpMethod: "POST"
+                contentHandling: "CONVERT_TO_TEXT"
+                type: "aws"
+                credentials: !GetAtt HelloworldApiRole.Arn
+        securityDefinitions:
+          sigv4:
+            type: "apiKey"
+            name: "Authorization"
+            in: "header"
+            x-amazon-apigateway-authtype: "awsSigv4"
+        definitions:
+          Empty:
+            type: "object"
+            title: "Empty Schema"
+
+  HelloworldApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: HelloworldApi
+    Properties:
+      RestApiId: !Ref HelloworldApi
+      StageName: prod
+
+  HelloworldApiPolicy:
+    Type: AWS::IAM::Policy
+    DependsOn: HelloworldApiRole
+    Properties:
+      PolicyName: HelloworldApiPolicy
+      PolicyDocument:
+        Statement:
+        - Action: ["lambda:invoke*"]
+          Resource: arn:aws:lambda:*
+          Effect: Allow
+        - Action: ["cloudwatch:*"]
+          Resource: "arn:aws:cloudwatch:*"
+          Effect: Allow
+      Roles: [!Ref HelloworldApiRole]
+
+  HelloworldApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: helloworld-apigateway-role
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service:
+            - apigateway.amazonaws.com
+      Path: "/"
+
+Outputs:
+  ApiUrl:
+    Description: URL of the API endpoint
+    Value:
+      Fn::Join:
+      - ''
+      - - https://
+        - !Ref HelloworldApi
+        - ".execute-api."
+        - !Ref AWS::Region
+        - ".amazonaws.com/"
+        - prod
