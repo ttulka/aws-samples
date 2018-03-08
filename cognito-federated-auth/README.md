@@ -6,6 +6,8 @@ Simple authentication (authenticated/unauthenticated) and authorization (allowed
 
 ![Big Picture](https://raw.githubusercontent.com/ttulka/aws-samples/master/cognito-federated-auth/CognitoBigPicture.png)
 
+The main motivation is to be able to create a client with no dependencies to AWS SDK.
+
 ## Set Up the Sample
 
 ### Prepare
@@ -13,7 +15,7 @@ Simple authentication (authenticated/unauthenticated) and authorization (allowed
 #### 1. Build source codes
 ```
 cd authentication
-mvn clean package
+mvn package
 ``` 
 #### 2. Create a S3 bucket for artifacts
 
@@ -70,3 +72,17 @@ HTTP/1.1 200 OK
 
 Calling the URL without the AIM credentials must result to `403` HTTP Status.
 
+### REST Client in Java
+
+The client is based on [Apache HttpComponents](https://hc.apache.org) and completely independent on AWS SDK. 
+
+#### 1. Edit `client\src\test\java\cz\net21\ttulka\aws\auth\AWSAuthClientTest.java` file
+- Change all the values in the class attributes.
+
+#### 2. Run the client as a JUnit test.
+```
+cd client
+mvn test
+```
+
+Read https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html how to use the client with S3.
