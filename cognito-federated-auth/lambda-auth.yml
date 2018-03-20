@@ -93,7 +93,7 @@ Resources:
                 "200":
                   schema:
                     $ref: "#/definitions/Empty"
-                "400":
+                "401":
                   schema:
                     $ref: "#/definitions/Error"
               x-amazon-apigateway-integration:
@@ -103,7 +103,7 @@ Resources:
                     responseTemplates:
                       application/json: "$input.path('$')"
                   .*error.*:
-                    statusCode: "400"
+                    statusCode: "401"
                     responseTemplates:
                       application/json: |-
                         #set ($errorMessageObj = $util.parseJson($input.path('$.errorMessage')))
