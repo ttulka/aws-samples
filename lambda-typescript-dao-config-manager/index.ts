@@ -9,48 +9,49 @@ exports.handler = (event, context, callback) => {
 }
 
 function route(event, callback) {
-    const path = event.resource;
     const method = event.httpMethod;
 
-    const tenantId = event.headers.tenantId;
+    const tenantId = event.headers ? event.headers.tenantId : null;
+    if (!tenantId) {
+        error("Tenant ID missing in the header.", callback);
+    }
 
     switch (method) {
         case 'GET':
-            if (path == '/{id}') {
+            if (event.pathParameters) {
                 let configId = event.pathParameters.id;
                 get(tenantId, configId, callback);
 
-            } else if (path == '/') {
+            } else {
                 list(tenantId, callback);
-
-            } else {
-                error("Wrong URL.", callback);
             }
             break;
+
         case 'POST':
-            if (path == '/') {
-                create(tenantId, event.body, callback);
-
+            if (!event.body) {
+                error("Wrong payload.", callback);
             } else {
-                error("Wrong URL.", callback);
+                create(tenantId, JSON.parse(event.body), callback);
             }
             break;
+
         case 'PUT':
-            if (path == '/{id}') {
-                let configId = event.pathParameters.id;
-                update(tenantId, configId, event.body, callback);
-
+            if (!event.pathParameters) {
+                error("Config ID is missing.", callback);
+            } else  if (!event.body) {
+                error("Wrong payload.", callback);
             } else {
-                error("Wrong URL.", callback);
+                let configId = event.pathParameters.id;
+                update(tenantId, configId, JSON.parse(event.body), callback);
             }
             break;
+
         case 'DELETE':
-            if (path == '/{id}') {
+            if (!event.pathParameters) {
+                error("Config ID is missing.", callback);
+            } else {
                 let configId = event.pathParameters.id;
                 remove(tenantId, configId, callback);
-
-            } else {
-                error("Wrong URL.", callback);
             }
             break;
     }
@@ -58,12 +59,10 @@ function route(event, callback) {
 
 class Config {
     id: string;
-    tenantId: string;
     name: string;
 
-    constructor(id, tenantId, name) {
+    constructor(id, name) {
         this.id = id;
-        this.tenantId = tenantId;
         this.name = name;
     }
 }
@@ -82,7 +81,6 @@ function get(tenantId, configId, callback) {
         } else {
             let config = new Config(
                 response.Item.configId,
-                response.Item.tenantId,
                 response.Item.configName
             );
             success(config, callback);
@@ -183,22 +181,17 @@ function success(body, callback) {
 
 function error(err, callback) {
     console.error(err);
-    done(400, JSON.stringify(err), callback);
+    done(400, err, callback);
 }
 
 function done(statusCode, body, callback, contentType = 'application/json', isBase64Encoded = false) {
     let response = {
         statusCode: statusCode,
         isBase64Encoded: isBase64Encoded,
-        body: body,
+        body: typeof body == 'string' ? body : JSON.stringify(body),
         headers: {
             'Content-Type': contentType
         }
     };
-    if (statusCode == 200) {
-        callback(null, response);
-    } else {
-        callback(response, null);
-    }
-
+    callback(null, response);
 }
