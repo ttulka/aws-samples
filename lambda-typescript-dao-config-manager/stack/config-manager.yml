@@ -1,0 +1,27 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Configuration Management"
+
+Resources:
+
+  DbTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Config
+      AttributeDefinitions:
+      - AttributeName: tenantId
+        AttributeType: S
+      - AttributeName: configId
+        AttributeType: S
+      KeySchema:
+      - AttributeName: tenantId
+        KeyType: HASH
+      - AttributeName: configId
+        KeyType: RANGE
+      ProvisionedThroughput:
+        ReadCapacityUnits: 10
+        WriteCapacityUnits: 10
+
+Outputs:
+  DbTable:
+    Description: "DynamoDB Table"
+    Value: !Ref DbTable
