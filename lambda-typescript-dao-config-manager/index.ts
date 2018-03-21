@@ -79,11 +79,15 @@ function get(tenantId, configId, callback) {
         if (err) {
             error(err, callback);
         } else {
-            let config = new Config(
-                response.Item.configId,
-                response.Item.configName
-            );
-            success(config, callback);
+            if (response.Item) {
+                let config = new Config(
+                    response.Item.configId,
+                    response.Item.configName
+                );
+                success(config, callback);
+            } else {
+                error("Cannot find ID " + configId, callback);
+            }
         }
     });
 }
@@ -188,7 +192,7 @@ function done(statusCode, body, callback, contentType = 'application/json', isBa
     let response = {
         statusCode: statusCode,
         isBase64Encoded: isBase64Encoded,
-        body: typeof body == 'string' ? body : JSON.stringify(body),
+        body: typeof body == 'string' ? "{\"message\": \"" + body  + "\"}" : JSON.stringify(body),
         headers: {
             'Content-Type': contentType
         }
