@@ -1,0 +1,128 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Config Manager CI/CD Pipeline - DEV Account."
+
+Parameters:
+
+  ProjectName:
+    Type: String
+    Description: Name of the project.
+    MinLength: "1"
+    MaxLength: "80"
+    AllowedPattern: "[A-Za-z0-9-]+"
+    ConstraintDescription: Malformed input parameter. ProjectName must only contain upper and lower case letters, numbers, and -.
+    Default: config-manager
+  CIAccountId:
+    Type: String
+    Description: ARN of the CI Account
+    AllowedPattern: "[0-9]+"
+    ConstraintDescription: Account ID is a number
+    Default: 1234567890
+  KMSKey:
+    Type: String
+    Description: ARN of the KMS Key
+
+Resources:
+
+  CrossAccountRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-cross-account-role"
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${CIAccountId}:root"
+            Action: sts:AssumeRole
+      Policies:
+      - PolicyName: CrossAccountPolicy
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action:
+                - cloudformation:*
+                - codebuild:*
+                - s3:*
+                - iam:PassRole
+              Resource: "*"
+            - Effect: Allow
+              Action: ["kms:Decrypt", "kms:Encrypt"]
+              Resource: !Ref KMSKey
+
+  CloudFormationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-cloudformation-role"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [cloudformation.amazonaws.com]
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: CloudFormationPolicy
+        PolicyDocument:
+          Statement:
+          - Action: ["s3:*"]
+            Resource: "*"
+            Effect: Allow
+          - Action: ["iam:GetRole", "iam:CreateRole", "iam:DeleteRole", "iam:AttachRolePolicy", "iam:DetachRolePolicy", "iam:DeleteRolePolicy", "iam:PutRolePolicy", "iam:PassRole"]
+            Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/${ProjectName}*"
+            Effect: Allow
+          - Action: ["cloudformation:CreateChangeSet"]
+            Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:aws:transform/*"
+            Effect: Allow
+          - Action: ["dynamodb:*"]
+            Resource: !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/Config"
+            Effect: Allow
+          - Action: ["kms:Decrypt", "kms:Encrypt"]
+            Resource: !GetAtt KMSKey.Arn
+            Effect: Allow
+
+  CodeBuildTestRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-codebuild-test-role"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [codebuild.amazonaws.com]
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: CodeBuildTestPolicy
+        PolicyDocument:
+          Statement:
+          - Action: ["s3:*"]
+            Resource: "*"
+            Effect: Allow
+          - Action: ["cloudformation:DescribeStacks"]
+            Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${ProjectName}*"
+            Effect: Allow
+          - Action: ["logs:CreateLogStream", "logs:PutLogEvents", "logs:CreateLogGroup"]
+            Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${ProjectName}*"
+            Effect: Allow
+          - Action: ["kms:Decrypt", "kms:Encrypt"]
+            Resource: !Ref KMSKey
+            Effect: Allow
+
+  CodeBuildTest:
+    Type: AWS::CodeBuild::Project
+    DependsOn: [CodeBuildTestRole]
+    Properties:
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: "aws/codebuild/nodejs:6.3.1"
+        Type: LINUX_CONTAINER
+      Name: !Sub "${ProjectName}-codebuild-test"
+      ServiceRole: !Ref CodeBuildTestRole
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: buildspec-test.yml
+      TimeoutInMinutes: 5

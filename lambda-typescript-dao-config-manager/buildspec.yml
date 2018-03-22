@@ -1,0 +1,16 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - npm install -g typescript
+  build:
+    commands:
+      - npm install
+      - tsc
+
+artifacts:
+  type: zip
+  files:
+    - stack/config-manager.yml
+    - index.js
