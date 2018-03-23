@@ -181,7 +181,7 @@ Resources:
     Type: AWS::S3::Bucket
     DeletionPolicy: Delete
     Properties:
-      BucketName: !Sub "talisker-ci-${ProjectName}"
+      BucketName: !Sub "ttulka-ci-${ProjectName}"
 
   CodeBuild:
     Type: AWS::CodeBuild::Project

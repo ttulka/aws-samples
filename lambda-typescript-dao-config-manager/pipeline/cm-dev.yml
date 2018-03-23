@@ -79,7 +79,7 @@ Resources:
             Resource: !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/Config"
             Effect: Allow
           - Action: ["kms:Decrypt", "kms:Encrypt"]
-            Resource: !GetAtt KMSKey.Arn
+            Resource: !Ref KMSKey
             Effect: Allow
 
   CodeBuildTestRole:
@@ -105,6 +105,9 @@ Resources:
             Effect: Allow
           - Action: ["logs:CreateLogStream", "logs:PutLogEvents", "logs:CreateLogGroup"]
             Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${ProjectName}*"
+            Effect: Allow
+          - Action: ["dynamodb:*"]
+            Resource: !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/Config*"
             Effect: Allow
           - Action: ["kms:Decrypt", "kms:Encrypt"]
             Resource: !Ref KMSKey

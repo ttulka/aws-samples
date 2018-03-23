@@ -1,0 +1,41 @@
+{
+  "resource": "/{id}",
+  "path": "/123456",
+  "httpMethod": "GET",
+  "headers": {
+    "tenantId": "TEST"
+  },
+  "queryStringParameters": null,
+  "pathParameters": {
+    "id": "Config123"
+  },
+  "stageVariables": null,
+  "requestContext": {
+    "path": "/{id}",
+    "accountId": "9999999999",
+    "resourceId": "xxxxxx",
+    "stage": "test-invoke-stage",
+    "requestId": "test-invoke-request",
+    "identity": {
+      "cognitoIdentityPoolId": null,
+      "cognitoIdentityId": null,
+      "apiKey": "test-invoke-api-key",
+      "cognitoAuthenticationType": null,
+      "userArn": "arn:aws:sts::9999999999:assumed-role/sandbox-tomas.tulka/tomas.tulka",
+      "apiKeyId": "test-invoke-api-key-id",
+      "userAgent": "aws-internal/3",
+      "accountId": "9999999999",
+      "caller": "XXXXXXXXXXXXXXX:tomas.tulka",
+      "sourceIp": "test-invoke-source-ip",
+      "accessKey": "XXXXXXXXXXXXXXX",
+      "cognitoAuthenticationProvider": null,
+      "user": "XXXXXXXXXXXXXXX:tomas.tulka"
+    },
+    "resourcePath": "/{id}",
+    "httpMethod": "GET",
+    "apiId": "xxxxxxxxx",
+    "authorizer": null
+  },
+  "body": null,
+  "isBase64Encoded": false
+}

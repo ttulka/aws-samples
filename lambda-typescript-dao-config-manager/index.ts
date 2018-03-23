@@ -184,7 +184,7 @@ function success(body, callback) {
 }
 
 function error(err, callback) {
-    console.error(err);
+    console.error("ERROR", err);
     done(400, err, callback);
 }
 

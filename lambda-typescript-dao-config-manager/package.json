@@ -4,15 +4,22 @@
   "lockfileVersion": 1,
   "requires": true,
   "scripts": {
-    "test": "node test.js"
+    "test": "jasmine-ts"
   },
   "devDependencies": {
     "@types/aws-sdk": "^2.7.0",
+    "@types/jasmine": "^2.8.6",
     "@types/node": "^6.0.102",
+    "aws-sdk": "^2.212.1",
+    "fs": "0.0.1-security",
+    "jasmine": "^3.1.0",
+    "jasmine-core": "^3.1.0",
+    "jasmine-ts": "^0.2.1",
     "proxy-agent": "^2.2.0",
     "typescript": "^2.4.2"
   },
   "dependencies": {
+    "requirejs": "^2.3.5",
     "uuid": "^3.1.0"
   }
 }
