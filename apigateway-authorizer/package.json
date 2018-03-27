@@ -1,0 +1,17 @@
+{
+  "name": "authorizer",
+  "version": "1.0.0",
+  "scripts": {
+  },
+  "devDependencies": {
+    "@types/aws-sdk": "^2.7.0",
+    "@types/node": "^6.0.102",
+    "aws-sdk": "^2.212.1",
+    "typescript": "^2.4.2",
+    "requirejs": "^2.3.5"
+  },
+  "dependencies": {
+    "node-jose": "^0.11.0",
+    "request": "^2.85.0"
+  }
+}
