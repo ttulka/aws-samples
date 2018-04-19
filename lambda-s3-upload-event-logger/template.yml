@@ -1,0 +1,46 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Lambda functions logs uploaded files from S3
+Parameters:
+  BucketName:
+    Description: S3 bucket name
+    Type: String
+Resources:
+  Bucket:
+    Properties:
+      BucketName:
+        Ref: BucketName
+    Type: AWS::S3::Bucket
+  
+  UploadEventLogger:
+    Properties:
+      AutoPublishAlias: prod
+      CodeUri: s3://tt-sandbox-artifacts/ba98c0b5bac2d330c003d633d16eccb3
+      DeploymentPreference:
+        Type: AllAtOnce
+      Events:
+        FileUpload:
+          Properties:
+            Bucket:
+              Ref: Bucket
+            Events: s3:ObjectCreated:*
+          Type: S3
+      FunctionName: UploadEventLogger
+      Handler: cz.net21.ttulka.cloud.server.aws.lambda.UploadEventLogger
+      MemorySize: 256
+      Policies:
+      - Statement:
+        - Action: s3:GetObject*
+          Effect: Allow
+          Resource:
+            Fn::Sub: arn:aws:s3:::${BucketName}/*
+        - Action:
+          - logs:CreateLogGroup
+          - logs:CreateLogStream
+          - logs:PutLogEvents
+          Effect: Allow
+          Resource: arn:aws:logs:*
+        Version: 2012-10-17
+      Runtime: java8
+      Timeout: 30
+    Type: AWS::Serverless::Function
+Transform: AWS::Serverless-2016-10-31
