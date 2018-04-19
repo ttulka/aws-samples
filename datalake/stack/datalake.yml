@@ -1,0 +1,562 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "DataLake"
+
+Parameters:
+
+  BucketNamePrefix:
+    Type: String
+    Description: "Final name will look like <prefix>-data-lake-<region>."
+    MinLength: "1"
+    MaxLength: "20"
+    AllowedPattern: "[a-z0-9-]+"
+    ConstraintDescription: Malformed input parameter. TenantId must only contain 20 lower case letters, numbers, and -.
+    Default: ttulka
+
+# TODO enable these params for a pipeline
+#  ArtifactS3Bucket:
+#    Type: String
+#    Description: Artifact S3 bucket
+#  RequestProcessorLambdaS3Key:
+#    Type: String
+#    Description: Artifact object key
+#  ObjectCreatedProcessorLambdaS3Key:
+#    Type: String
+#    Description: Artifact object key
+
+Resources:
+
+  KMSKey:
+    Type: AWS::KMS::Key
+    Description: "KMS DataLake key"
+    Properties:
+      KeyPolicy:
+        Version: "2012-10-17"
+        Id: !Sub "${BucketNamePrefix}-data-lake-key-${AWS::Region}"
+        Statement:
+          - Sid: Allows admin of the key
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: ["kms:*"]
+            Resource: "*"
+
+  KMSAlias:
+    Type: AWS::KMS::Alias
+    DependsOn: [KMSKey]
+    Properties:
+      AliasName: !Sub "alias/${BucketNamePrefix}-data-lake-key-${AWS::Region}"
+      TargetKeyId: !Ref KMSKey
+
+  Bucket:
+    Type: AWS::S3::Bucket
+    DependsOn: [ObjectCreatedProcessorLambda, ObjectCreatedProcessorLambdaPermission]
+    Properties:
+      BucketName: !Sub "${BucketNamePrefix}-data-lake-${AWS::Region}"
+      NotificationConfiguration:
+        LambdaConfigurations:
+        - Event: "s3:ObjectCreated:*"
+          Function: !GetAtt ObjectCreatedProcessorLambda.Arn
+      # TODO secure with KMS
+
+  PackageTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    Properties:
+      #TableName: DataLakePackage
+      AttributeDefinitions:
+      - AttributeName: packageId
+        AttributeType: S
+      - AttributeName: tenantId
+        AttributeType: S
+      KeySchema:
+      - AttributeName: packageId
+        KeyType: HASH
+      - AttributeName: tenantId
+        KeyType: RANGE
+      ProvisionedThroughput:
+        ReadCapacityUnits: 10
+        WriteCapacityUnits: 10
+      GlobalSecondaryIndexes:
+      - IndexName: packageId_idx
+        KeySchema:
+        - AttributeName: packageId
+          KeyType: HASH
+        Projection:
+          ProjectionType: ALL
+        ProvisionedThroughput:
+          ReadCapacityUnits: 10
+          WriteCapacityUnits: 10
+
+  DatasetTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    Properties:
+      #TableName: DataLakeDataset
+      AttributeDefinitions:
+      - AttributeName: datasetId
+        AttributeType: S
+      - AttributeName: packageId
+        AttributeType: S
+      - AttributeName: s3Key
+        AttributeType: S
+      - AttributeName: s3Bucket
+        AttributeType: S
+      KeySchema:
+      - AttributeName: datasetId
+        KeyType: HASH
+      - AttributeName: packageId
+        KeyType: RANGE
+      ProvisionedThroughput:
+        ReadCapacityUnits: 10
+        WriteCapacityUnits: 10
+      GlobalSecondaryIndexes:
+      - IndexName: s3Key_s3Bucket_idx
+        KeySchema:
+        - AttributeName: s3Key
+          KeyType: HASH
+        - AttributeName: s3Bucket
+          KeyType: RANGE
+        Projection:
+          ProjectionType: ALL
+        ProvisionedThroughput:
+           ReadCapacityUnits: 10
+           WriteCapacityUnits: 10
+
+  ObjectCreatedTopic:
+    Type: AWS::SNS::Topic
+
+  # TODO auth secure this topic
+  ObjectCreatedTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    DependsOn: [ObjectCreatedTopic]
+    Properties:
+      Topics:
+        - !Ref ObjectCreatedTopic
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Action: ["sns:Subscribe"]
+          Resource: !Ref ObjectCreatedTopic
+          Principal: "*"
+          Effect: Allow
+
+  RequestProcessorLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: [RequestProcessorRole, PackageTable, DatasetTable, Bucket]
+    Properties:
+      FunctionName: data-lake-request-processor
+      Runtime: nodejs6.10 #nodejs8.10
+      Handler: index.handler
+      Environment:
+        Variables:
+          PACKAGE_TABLE: !Ref PackageTable
+          DATASET_TABLE: !Ref DatasetTable
+          S3_BUCKET: !Ref Bucket
+          KMS_KEY_ID: !Ref KMSAlias
+      MemorySize: 1024
+      Timeout: 120
+      Role: !GetAtt RequestProcessorRole.Arn
+      Code:
+#        S3Bucket: !Ref ArtifactS3Bucket
+#        S3Key: !Ref RequestProcessorLambdaS3Key
+        ZipFile: >
+          const PACKAGE_TABLE = process.env.PACKAGE_TABLE;
+          const DATASET_TABLE = process.env.DATASET_TABLE;
+          const S3_BUCKET = process.env.S3_BUCKET;
+          const KMS_KEY_ID = process.env.KMS_KEY_ID;
+
+          const AWS = require('aws-sdk');
+          const dynamoDb = new AWS.DynamoDB.DocumentClient({apiVersion: '2012-08-10'});
+          const s3 = new AWS.S3({apiVersion: '2006-03-01', signatureVersion: 'v4'});
+
+          const uuidv1 = require('uuid/v1');
+
+          exports.handler = (event, context, callback) => {
+              console.log("EVENT", JSON.stringify(event));
+
+              let tenantId = "TEST" || null; // TODO remove TEST
+              try {
+                tenantId = event.requestContext.authorizer.tenantId;
+              } catch (err) {
+                console.error(err);
+              }
+              if (!tenantId) {
+                  return error("Tenant ID missing in the header.", callback);
+              }
+              if (!event.body) {
+                  return error("Payload is not set.", callback);
+              }
+
+              const payload = JSON.parse(event.body);
+              console.log("PAYLOAD", JSON.stringify(payload));
+
+              if (!payload.type) {
+                  return error("'type' is missing in the payload.", callback);
+              }
+              if (!payload.contentType) {
+                  return error("'contentType' is missing in the payload.", callback);
+              }
+              if (!payload.name) {
+                  return error("'name' is missing in the payload.", callback);
+              }
+
+              let type = payload.type;
+              let contentType = payload.contentType;
+              let name = payload.name;
+
+              let packageId = uuidv1();
+              let datasetId = uuidv1();
+
+              let s3Bucket = S3_BUCKET;
+
+              let keyHash = packageId.substr(0, 8);
+              let s3Key = keyHash + "/" + tenantId + "/" + datasetId;
+
+              let createdAt = new Date().toISOString();
+
+              dynamoDb.put({
+                  TableName: PACKAGE_TABLE,
+                  Item: {
+                      packageId,
+                      tenantId,
+                      tags: [],
+                      createdAt
+                  }
+              }).promise()
+              .then(() => {
+                  return dynamoDb.put({
+                      TableName: DATASET_TABLE,
+                      Item: {
+                          datasetId,
+                          packageId,
+                          s3Key,
+                          s3Bucket,
+                          type,
+                          contentType,
+                          name,
+                          createdAt
+                      }
+                  }).promise()
+              })
+              .then(() => {
+                  let uploadUrl = buildUploadUrl(s3Bucket, s3Key, contentType, KMS_KEY_ID);
+                  response(uploadUrl, callback);
+              })
+              .catch((err) => {
+                  console.error("ERROR", err);
+                  error(err, callback);
+              });
+          }
+
+          function buildUploadUrl(bucket, key, contentType, kmsKeyId) {
+              let params = {
+                  Bucket: bucket,
+                  Key: key,
+                  ContentType: contentType,
+                  //ServerSideEncryption: 'aws:kms',
+                  //SSEKMSKeyId: kmsKeyId,
+                  Expires: 900 //15 min
+              };
+              let url = s3.getSignedUrl('putObject', params);
+              console.log('upload url: ', url);
+              return url;
+          }
+
+          function response(uploadUrl, callback) {
+              callback(null, {
+                 isBase64Encoded: false,
+                 statusCode: 200,
+                 headers: {
+                    'Content-Type': 'application/json'
+                 },
+                 body: JSON.stringify({uploadUrl})
+              });
+          }
+
+          function error(err, callback) {
+              console.error("ERROR", err);
+              callback(err);
+          }
+
+  RequestProcessorRole:
+    Type: AWS::IAM::Role
+    DependsOn: [PackageTable, DatasetTable, Bucket]
+    Properties:
+      RoleName: data-lake-request-processor-role
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [lambda.amazonaws.com]
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: LambdaExecutionPolicy
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
+            Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*"
+            Effect: Allow
+          - Action: ["dynamodb:*"]
+            Resource:
+            - !GetAtt PackageTable.Arn
+            - !GetAtt DatasetTable.Arn
+            Effect: Allow
+          - Action: ["s3:PutObject"]
+            Resource: !Sub "arn:aws:s3:::${BucketNamePrefix}-data-lake-${AWS::Region}/*"
+            Effect: Allow
+
+  ObjectCreatedProcessorLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: [ObjectCreatedProcessorRole, PackageTable, DatasetTable]
+    Properties:
+      FunctionName: data-lake-object-created-processor
+      Runtime: nodejs6.10 #nodejs8.10
+      Handler: index.handler
+      Environment:
+        Variables:
+          PACKAGE_TABLE: !Ref PackageTable
+          DATASET_TABLE: !Ref DatasetTable
+          TOPIC_ARN: !Ref ObjectCreatedTopic
+      MemorySize: 1024
+      Timeout: 120
+      Role: !GetAtt ObjectCreatedProcessorRole.Arn
+      Code:
+#        S3Bucket: !Ref ArtifactS3Bucket
+#        S3Key: !Ref ObjectCreatedProcessorLambdaS3Key
+        ZipFile: >
+          const PACKAGE_TABLE = process.env.PACKAGE_TABLE;
+          const DATASET_TABLE = process.env.DATASET_TABLE;
+
+          const TOPIC_ARN = process.env.TOPIC_ARN;
+
+          const AWS = require('aws-sdk');
+          const dynamoDb = new AWS.DynamoDB.DocumentClient({apiVersion: '2012-08-10'});
+          const s3 = new AWS.S3({apiVersion: '2006-03-01', signatureVersion: 'v4'});
+          const sns = new AWS.SNS({apiVersion: '2010-03-31'});
+
+          exports.handler = (event, context, callback) => {
+              console.log("EVENT", JSON.stringify(event))
+
+              event.Records.forEach((rec) => {
+                  let payload = rec.s3;
+                  console.log("S3 EVENT", payload)
+
+                  let s3Bucket = payload.bucket.name;
+                  let s3Key = payload.object.key;
+
+                  dynamoDb.query({
+                      TableName: DATASET_TABLE,
+                      IndexName: 's3Key_s3Bucket_idx',
+                      KeyConditionExpression: '#a = :x AND #b = :y',
+                      ExpressionAttributeNames: {
+                          '#a': 's3Key',
+                          '#b': 's3Bucket'
+                      },
+                      ExpressionAttributeValues: {
+                          ":x": s3Key,
+                          ":y": s3Bucket
+                      }
+                  }).promise()
+                  .then(data => {
+                      return Promise.all(data.Items.map(datasetItem => {
+
+                          return dynamoDb.query({
+                              TableName: PACKAGE_TABLE,
+                              IndexName: 'packageId_idx',
+                              KeyConditionExpression: '#a = :x',
+                              ExpressionAttributeNames: {
+                                  '#a': 'packageId'
+                              },
+                              ExpressionAttributeValues: {
+                                  ":x": datasetItem.packageId
+                              }
+                          }).promise()
+                          .then(data => {
+                              let packageItem = data.Items[0];
+
+                              let downloadUrl = buildDownloadUrl(datasetItem.s3Bucket, datasetItem.s3Key);
+
+                              let pckg = {
+                                  packageId: packageItem.packageId,
+                                  tenantId: packageItem.tenantId,
+                                  dataset: {
+                                      datasetId: datasetItem.datasetId,
+                                      name: datasetItem.name,
+                                      type: datasetItem.type,
+                                      contentType: datasetItem.contentType,
+                                      createdAt: datasetItem.createdAt,
+                                      downloadUrl
+                                  },
+                                  tags: packageItem.tags,
+                                  createdAt: packageItem.createdAt
+                              };
+
+                              return sns.publish({
+                                  Message: JSON.stringify({
+                                      Records: [{
+                                          eventSource: 'data-lake',
+                                          eventName: 'DATASET_UPLOAD_COMPLETED',
+                                          eventVersion: '1.0',
+                                          eventTime: new Date().toISOString(),
+                                          package: pckg
+                                      }]
+                                  }),
+                                  TopicArn: TOPIC_ARN
+                              }).promise();
+                          });
+                      }));
+                  })
+                  .then(function (data) {
+                      success(callback);
+                  })
+                  .catch(function (err) {
+                      error(err, callback);
+                  });
+              });
+          }
+
+          function buildDownloadUrl(bucket, key) {
+             let signedUrlParams = {
+                 Bucket: bucket,
+                 Key: key,
+                 Expires: 900 //15 min
+             };
+             var url = s3.getSignedUrl('getObject', signedUrlParams);
+             console.log('download url: ', url);
+             return url;
+          };
+
+          function success(callback) {
+              callback(null, 'success');
+          }
+
+          function error(err, callback) {
+              console.error("ERROR", err);
+              callback(err);
+          }
+
+  ObjectCreatedProcessorLambdaPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn: [ObjectCreatedProcessorLambda]
+    Properties:
+        Action: "lambda:InvokeFunction"
+        FunctionName: !Ref ObjectCreatedProcessorLambda
+        Principal: s3.amazonaws.com
+        SourceAccount: !Ref "AWS::AccountId"
+        SourceArn: !Sub "arn:aws:s3:::${BucketNamePrefix}-data-lake-${AWS::Region}"
+
+  ObjectCreatedProcessorRole:
+    Type: AWS::IAM::Role
+    DependsOn: [ObjectCreatedTopic]
+    Properties:
+      RoleName: data-lake-object-created-processor-role
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [lambda.amazonaws.com]
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: LambdaExecutionPolicy
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
+            Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*"
+            Effect: Allow
+          - Action: ["dynamodb:Query"]
+            Resource:
+            - !GetAtt PackageTable.Arn
+            - !GetAtt DatasetTable.Arn
+            - !Sub
+              - "${Table}/index/*"
+              - { Table: !GetAtt PackageTable.Arn }
+            - !Sub
+              - "${Table}/index/*"
+              - { Table: !GetAtt DatasetTable.Arn }
+            Effect: Allow
+          - Action: ["sns:Publish"]
+            Resource: !Ref ObjectCreatedTopic
+            Effect: Allow
+          - Action: ["s3:GetObject"] # the presigned s3 download url is signed with this role
+            Resource: !Sub "arn:aws:s3:::${BucketNamePrefix}-data-lake-${AWS::Region}/*"
+            Effect: Allow
+  Api:
+    Type: AWS::ApiGateway::RestApi
+    DependsOn: [ApiRole, RequestProcessorLambda]
+    Properties:
+      Name: data-lake-api
+      Body:
+        swagger: "2.0"
+        info:
+          title: data-lake-api
+        basePath: /
+        schemes:
+        - https
+        paths:
+          /:
+            post:
+              x-amazon-apigateway-integration:
+                uri:
+                  !Sub
+                  - "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations"
+                  - { LambdaArn: !GetAtt RequestProcessorLambda.Arn}
+                passthroughBehavior: when_no_match
+                httpMethod: POST
+                contentHandling: CONVERT_TO_TEXT
+                type: aws_proxy
+                credentials: !GetAtt ApiRole.Arn
+
+  ApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: data-lake-api-role
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service:
+            - apigateway.amazonaws.com
+      Path: "/"
+      Policies:
+      - PolicyName: ApiPolicy
+        PolicyDocument:
+          Statement:
+          - Action: ["lambda:invoke*"]
+            Resource: "arn:aws:lambda:*"
+            Effect: Allow
+          - Action: ["cloudwatch:*"]
+            Resource: "arn:aws:cloudwatch:*"
+            Effect: Allow
+
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: [Api]
+    Properties:
+      RestApiId: !Ref Api
+      StageName: prod
+
+Outputs:
+
+  ApiUrl:
+    Description: URL of the DataLake API
+    Value: !Join
+      - ''
+      - - https://
+        - !Ref Api
+        - '.execute-api.'
+        - !Ref 'AWS::Region'
+        - '.amazonaws.com/'
+        - 'prod'
+
+  BucketName:
+    Description: DataLake S3 Bucket
+    Value: !Ref Bucket
+
+  ObjectCreatedTopicArn:
+    Description: Topic for Events When a DataLake-Object is Created.
+    Value: !Ref ObjectCreatedTopic
