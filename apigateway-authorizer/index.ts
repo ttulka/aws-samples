@@ -10,10 +10,21 @@ const issHolder = new TenantInfoUtil();
 const region = process.env.AWS_REGION;
 
 exports.handler = function (event, context, callback) {
-    authorize(event.authorizationToken, event.methodArn, callback);
+    handleRequest(event.authorizationToken, event.methodArn, callback);
 };
 
-var authorize = (token, methodArn, callback) => {
+function handleRequest(rawToken, methodArn, callback) {
+    let splitToken = rawToken.split('Bearer');
+    if (splitToken.length !== 2) {
+        console.error("Token is not Bearer: " + rawToken);
+        return unauthorized(callback);
+    }
+    const token = splitToken[1].trim();
+
+    authorize(token, methodArn, callback);
+}
+
+function authorize(token, methodArn, callback) {
     try {
         let jwt = parseToken(token);
 
