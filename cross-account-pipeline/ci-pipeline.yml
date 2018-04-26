@@ -194,10 +194,10 @@ Resources:
         - Action: ["cloudformation:DescribeStacks", "cloudformation:DescribeChangeSet", "cloudformation:CreateChangeSet", "cloudformation:ExecuteChangeSet", "cloudformation:DeleteChangeSet"]
           Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${ProjectName}-app-stack*/*"
           Effect: Allow
-        - Action: ["iam:PassRole", "iam:ListRoles"]   ### REMOVE???
+        - Action: ["iam:PassRole", "iam:ListRoles"]   # enable passing a role to its action workers (CodeBuild projects)
           Resource: "*"
           Effect: Allow
-        - Action: ["sts:AssumeRole"]
+        - Action: ["sts:AssumeRole"]   # enable assuming a role its action workers (CloudFormation) are executed under
           Resource:
             - !Sub "arn:aws:iam::${DevAccountId}:role/${ProjectName}-*"
             - !Sub "arn:aws:iam::${QaAccountId}:role/${ProjectName}-*"
