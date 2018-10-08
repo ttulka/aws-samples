@@ -1,0 +1,68 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "DataLake"
+
+Resources:
+
+  Lambda:
+    Type: AWS::Lambda::Function
+    DependsOn: [LambdaRole]
+    Properties:
+      FunctionName: simple-lambda
+      Runtime: nodejs8.10
+      Handler: index.handler
+      MemorySize: 1024
+      Timeout: 120
+      Role: !GetAtt LambdaRole.Arn
+      Code:
+        ZipFile: >
+          exports.handler = async (event) => {
+            console.info('INFO', 'my info')
+            console.warn('WARN', 'my warning')
+            console.error('ERROR', 'my error')
+            
+            return 'ok'
+          }
+
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: simple-lambda-role
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [lambda.amazonaws.com]
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: LambdaExecutionPolicy
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
+            Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/simple-lambda*"
+            Effect: Allow
+  
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties: 
+      Subscription:
+        - Endpoint: tomas.tulka@gmail.com
+          Protocol: email   
+      
+  ExceptionAlarm:
+    Type: AWS::CloudWatch::Alarm
+    DependsOn: [Lambda, AlarmTopic]
+    Properties:
+      AlarmActions:
+        - !Ref AlarmTopic
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref Lambda
+      Period: 60
+      Statistic: Sum
+      Threshold: 0
+      EvaluationPeriods: 1
+      ComparisonOperator: GreaterThanThreshold
