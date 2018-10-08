@@ -16,11 +16,8 @@ Resources:
       Code:
         ZipFile: >
           exports.handler = async (event) => {
-            console.info('INFO', 'my info')
-            console.warn('WARN', 'my warning')
-            console.error('ERROR', 'my error')
-            
-            return 'ok'
+            console.error('ERROR', 'my error')            
+            return 'ok'   // throw new Error('my exception')
           }
 
   LambdaRole:
@@ -61,6 +58,31 @@ Resources:
       Dimensions:
         - Name: FunctionName
           Value: !Ref Lambda
+      Period: 60
+      Statistic: Sum
+      Threshold: 0
+      EvaluationPeriods: 1
+      ComparisonOperator: GreaterThanThreshold
+      
+  ErrorMetricFilter:            
+    Type: AWS::Logs::MetricFilter
+    DependsOn: [Lambda]
+    Properties: 
+      FilterPattern: "[timestamp, requestId, level = ERROR*, ...]"
+      LogGroupName: "/aws/lambda/simple-lambda"
+      MetricTransformations: 
+        - MetricName: ErrorFound
+          MetricNamespace: Lambda/Log
+          MetricValue: 1
+  
+  ErrorLogAlarm:
+    Type: AWS::CloudWatch::Alarm
+    DependsOn: [Lambda, ErrorMetricFilter]
+    Properties:
+      AlarmActions:
+        - !Ref AlarmTopic
+      MetricName: ErrorFound
+      Namespace: Lambda/Log
       Period: 60
       Statistic: Sum
       Threshold: 0
