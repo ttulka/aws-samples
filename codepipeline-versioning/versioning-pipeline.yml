@@ -1,0 +1,249 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Versioning CD Pipeline."
+
+Parameters:
+
+  ProjectName:
+    Type: String
+    Description: Name of the project.
+    MinLength: "1"
+    MaxLength: "20"
+    AllowedPattern: "[A-Za-z0-9-]+"
+    ConstraintDescription: Malformed input parameter. ProjectName must only contain upper and lower case letters, numbers, and -.
+    Default: versioning-test
+    
+  CodeCommitRepoName:
+    Type: String
+    Description: The CodeCommit repo name
+    Default: versioning-test
+  CodeCommitRepoBranch:
+    Type: String
+    Description: The CodeCommit repo branch
+    Default: master
+    
+  S3Artifactory:
+    Type: String
+    Description: The S3 Artifactory
+
+Resources:
+
+  #####################################################################################
+  #### SECURITY #######################################################################
+  #####################################################################################
+
+  S3PipelineArtifactsPolicy:
+    Type: AWS::S3::BucketPolicy
+    DependsOn: [S3PipelineArtifacts, CodePipelineRole, CodeBuildRole]
+    Properties:
+      Bucket: !Ref S3PipelineArtifacts
+      PolicyDocument:
+        Statement:
+        - Action: ["s3:*"]
+          Effect: Allow
+          Resource:
+            - !Sub "arn:aws:s3:::${S3PipelineArtifacts}"
+            - !Sub "arn:aws:s3:::${S3PipelineArtifacts}/*"
+          Principal:
+            AWS:
+              - !GetAtt CodePipelineRole.Arn
+              - !GetAtt CodeBuildRole.Arn
+
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-codebuild-role"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [codebuild.amazonaws.com]
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: CodeBuildPolicy
+        PolicyDocument:
+          Statement:
+          - Action: ["logs:CreateLogStream", "logs:PutLogEvents", "logs:CreateLogGroup"]
+            Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${ProjectName}*"
+            Effect: Allow
+            
+  CodeBuildVersioningRole:
+    Type: AWS::IAM::Role
+    DependsOn: [S3PipelineArtifacts]
+    Properties:
+      RoleName: !Sub "${ProjectName}-codebuild-versioning-role"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [codebuild.amazonaws.com]
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: CodeBuildPolicy
+        PolicyDocument:
+          Statement:
+          - Action: ["logs:CreateLogStream", "logs:PutLogEvents", "logs:CreateLogGroup"]
+            Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${ProjectName}*"
+            Effect: Allow
+          - Action: ["s3:GetObject"]
+            Resource: !Sub "arn:aws:s3:::${S3PipelineArtifacts}/*"
+            Effect: Allow
+          - Action: ["s3:PutObject"]
+            Resource: !Sub "arn:aws:s3:::${S3Artifactory}/*"
+            Effect: Allow
+            
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    DependsOn: [S3PipelineArtifacts]
+    Properties:
+      RoleName: !Sub "${ProjectName}-codepipeline-role"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [codepipeline.amazonaws.com]
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: CodePipelinePolicy
+        PolicyDocument:
+          Statement:
+          - Action: ["s3:*"]
+            Resource:
+              - !Sub "arn:aws:s3:::${S3PipelineArtifacts}"
+              - !Sub "arn:aws:s3:::${S3PipelineArtifacts}/*"
+            Effect: Allow
+          - Action: ["codecommit:CancelUploadArchive", "codecommit:GetBranch", "codecommit:GetCommit", "codecommit:GetUploadArchiveStatus", "codecommit:UploadArchive"]
+            Resource: !Sub "arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${CodeCommitRepoName}"
+            Effect: Allow
+          - Action: ["codebuild:StartBuild", "codebuild:BatchGetBuilds"]
+            Resource: !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/${ProjectName}*"
+            Effect: Allow
+          - Action: ["cloudformation:DescribeStacks", "cloudformation:DescribeChangeSet", "cloudformation:CreateChangeSet", "cloudformation:ExecuteChangeSet", "cloudformation:DeleteChangeSet"]
+            Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${ProjectName}-app-stack*/*"
+            Effect: Allow
+          - Action: ["iam:PassRole", "iam:ListRoles"]
+            Resource: "*"
+            Effect: Allow
+
+  #####################################################################################
+  #### PIPELINE #######################################################################
+  #####################################################################################
+
+  S3PipelineArtifacts:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      BucketName: !Sub "pipeline-${ProjectName}"
+
+  CodeBuild:
+    Type: AWS::CodeBuild::Project
+    DependsOn: [CodeBuildRole]
+    Properties:
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: "aws/codebuild/ubuntu-base:14.04"
+        Type: LINUX_CONTAINER
+      Name: !Sub "${ProjectName}-codebuild-build"
+      ServiceRole: !Ref CodeBuildRole
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2          
+          phases:
+            build:
+              commands:
+                - ls -la
+                - zip package.zip *          
+          artifacts:
+            files:
+            - package.zip
+      TimeoutInMinutes: 5
+
+  CodeBuildVersioning:
+    Type: AWS::CodeBuild::Project
+    DependsOn: [CodeBuildVersioningRole]
+    Properties:
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: "aws/codebuild/ubuntu-base:14.04"
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - Name: ARTIFACTORY_BUCKET
+            Value: !Ref S3Artifactory
+          - Name: PROJECT_NAME
+            Value: !Ref ProjectName
+      Name: !Sub "${ProjectName}-codebuild-versioning-build"
+      ServiceRole: !Ref CodeBuildVersioningRole
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            build:
+              commands:
+                - ls -la
+                - ARTIFACT_ID=${PROJECT_NAME}-${CODEBUILD_START_TIME}.zip
+                - aws s3 cp package.zip s3://${ARTIFACTORY_BUCKET}/${ARTIFACT_ID}
+      TimeoutInMinutes: 5
+
+  CodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    DependsOn: [S3PipelineArtifacts, CodePipelineRole, CodeBuild, CodeBuildVersioning]
+    Properties:
+      Name: !Sub "${ProjectName}-pipeline"
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      RestartExecutionOnUpdate: true
+      Stages:
+      - Name: Source
+        Actions:
+        - Name: get-source-code
+          InputArtifacts: []
+          OutputArtifacts:
+          - Name: SourceArtifact
+          ActionTypeId:
+            Category: Source
+            Owner: AWS
+            Provider: CodeCommit
+            Version: "1"
+          Configuration:
+            RepositoryName: !Ref CodeCommitRepoName
+            BranchName: !Ref CodeCommitRepoBranch
+          RunOrder: 1
+      - Name: Build
+        Actions:
+        - Name: build-from-source
+          InputArtifacts:
+          - Name: SourceArtifact
+          OutputArtifacts:
+          - Name: BuildArtifact
+          ActionTypeId:
+            Category: Build
+            Owner: AWS
+            Version: "1"
+            Provider: CodeBuild
+          Configuration:
+            ProjectName: !Ref CodeBuild
+          RunOrder: 1
+      - Name: Versioning
+        Actions:
+        - Name: publish-artifacts
+          InputArtifacts:
+          - Name: BuildArtifact
+          OutputArtifacts: []
+          ActionTypeId:
+            Category: Build
+            Owner: AWS
+            Version: "1"
+            Provider: CodeBuild
+          Configuration:
+            ProjectName: !Ref CodeBuildVersioning
+          RunOrder: 1      
+      ArtifactStore:
+        Type: S3
+        Location: !Ref S3PipelineArtifacts
