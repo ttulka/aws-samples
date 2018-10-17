@@ -1,0 +1,87 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "CodePipeline-Approval Lambda"
+
+Resources:
+
+  ApprovalLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: [ApprovalLambdaRole]
+    Properties:
+      FunctionName: approve-pipeline
+      Runtime: nodejs8.10
+      Handler: index.handler
+      MemorySize: 1024
+      Timeout: 120
+      Role: !GetAtt ApprovalLambdaRole.Arn
+      Code:
+        ZipFile: >
+          const AWS = require('aws-sdk')
+          const codepipeline = new AWS.CodePipeline({apiVersion: '2015-07-09'})
+          
+          exports.handler = async function(event) {
+              if (!event.pipeline) {
+                  throw new Error('"pipeline" parameter must be set.')
+              }
+              if (!event.stage) {
+                  throw new Error('"stage" parameter must be set.')
+              }
+              if (!event.action) {
+                  throw new Error('"action" parameter must be set.')
+              }
+                            
+              const pipelineName = event.pipeline
+              const stageName = event.stage 
+              const actionName = event.action
+              const summary = event.summary || 'Approved'
+
+              const token = await getToken(pipelineName, stageName, actionName)
+              
+              const params = {
+                  pipelineName, stageName, actionName, token, result: {
+                      status: 'Approved',
+                      summary
+                  }                  
+              }
+              const response = await codepipeline.putApprovalResult(params).promise()
+              console.log(response)
+          }
+                    
+          
+          async function getToken(pipelineName, stageName, actionName) {
+              const state = await codepipeline.getPipelineState({name: pipelineName}).promise()
+              
+              if (state.stageStates && state.stageStates.length) {
+                  const stage = state.stageStates.find(stage => stage.stageName === stageName)
+                  if (stage) {
+                      const action = stage.actionStates.find(action => action.actionName === actionName)
+                      if (action && action.latestExecution && action.latestExecution.token) {
+                          return action.latestExecution.token
+                      }
+                  }
+              }
+              
+              throw new Error('Cannot get state for the pipeline ' + pipelineName + ', stage ' + stageName + ', action ' + actionName) 
+          }
+
+  ApprovalLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: approve-pipeline-role
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [lambda.amazonaws.com]
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: ApprovalLambdaPolicy
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
+            Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*"
+            Effect: Allow
+          - Action: ["codepipeline:GetPipelineState", "codepipeline:PutApprovalResult"]
+            Resource: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:*"
+            Effect: Allow
