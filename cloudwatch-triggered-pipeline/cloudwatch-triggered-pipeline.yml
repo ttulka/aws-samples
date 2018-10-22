@@ -1,0 +1,193 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "CloudWatch-Triggered CI/CD Pipeline."
+
+Parameters:
+
+  ProjectName:
+    Type: String
+    Description: Name of the project.
+    MinLength: 1
+    MaxLength: 50
+    AllowedPattern: "[A-Za-z0-9-]+"
+    ConstraintDescription: Malformed input parameter. ProjectName must only contain upper and lower case letters, numbers, and -.
+    Default: cloudwatch-triggered-pipeline
+    
+  S3Bucket:
+    Type: String
+    Description: Name of the S3 bucket.
+    MinLength: 1
+    MaxLength: 63
+    AllowedPattern: "[a-z0-9-]+"
+    ConstraintDescription: Malformed input parameter. ProjectName must only contain lower case letters, numbers, and -.
+    Default: cloudwatch-triggered-pipeline-bucket
+
+  S3Object:
+    Type: String
+    Description: The S3 object
+    Default: test.zip
+
+Resources:
+
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-codebuild-role"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [codebuild.amazonaws.com]
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: CodeBuildPolicy
+        PolicyDocument:
+          Statement:
+          - Action: ["logs:CreateLogStream", "logs:PutLogEvents", "logs:CreateLogGroup"]
+            Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${ProjectName}*"
+            Effect: Allow
+
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-codepipeline-role"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [codepipeline.amazonaws.com]
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: CodePipelinePolicy
+        PolicyDocument:
+          Statement:
+          - Action: ["s3:*"]
+            Resource:
+            - !Sub "arn:aws:s3:::${S3Bucket}"
+            - !Sub "arn:aws:s3:::${S3Bucket}/*"
+            Effect: Allow
+          - Action: ["codebuild:StartBuild", "codebuild:BatchGetBuilds"]
+            Resource: !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/${ProjectName}*"
+            Effect: Allow
+
+  CodeBuild:
+    Type: AWS::CodeBuild::Project
+    DependsOn: [CodeBuildRole]
+    Properties:
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: "aws/codebuild/ubuntu-base:14.04"
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - Name: PROJECT_NAME
+            Value: !Ref ProjectName
+      Name: !Sub "${ProjectName}-codebuild"
+      ServiceRole: !Ref CodeBuildRole
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            build:
+              commands:
+                - echo "TODO build me..."
+      TimeoutInMinutes: 5
+      
+  CodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    DependsOn: [CodePipelineRole, S3ArtifactBucket, CodeBuild]
+    Properties:
+      Name: !Sub "${ProjectName}-pipeline"
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      RestartExecutionOnUpdate: false
+      ArtifactStore:
+        Type: S3
+        Location: !Ref S3ArtifactBucket
+      Stages:
+      - Name: Source
+        Actions:
+        - Name: !Sub "${S3Bucket}@${S3Object}"
+          InputArtifacts: []
+          OutputArtifacts:
+          - Name: SourceArtifact
+          ActionTypeId:
+            Category: Source
+            Owner: AWS
+            Provider: S3
+            Version: 1
+          Configuration:
+            S3Bucket: !Ref S3Bucket
+            S3ObjectKey: !Ref S3Object
+            PollForSourceChanges: false
+          RunOrder: 1
+      - Name: Building
+        Actions:
+        - Name: build
+          InputArtifacts:
+          - Name: SourceArtifact
+          OutputArtifacts:
+          - Name: BuildArtifact
+          ActionTypeId:
+            Category: Build
+            Owner: AWS
+            Version: 1
+            Provider: CodeBuild
+          Configuration:
+            ProjectName: !Ref CodeBuild
+          RunOrder: 1
+          
+  S3ArtifactBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    DependsOn: [S3ArtifactBucket, CodePipelineRole, CodeBuildRole]
+    Properties:
+      Bucket: !Ref S3ArtifactBucket
+      PolicyDocument:
+        Statement:
+        - Action: ["s3:*"]
+          Effect: Allow
+          Resource:
+          - !Sub "arn:aws:s3:::${S3ArtifactBucket}"
+          - !Sub "arn:aws:s3:::${S3ArtifactBucket}/*"
+          Principal:
+            AWS:
+            - !GetAtt CodePipelineRole.Arn
+            - !GetAtt CodeBuildRole.Arn
+            
+  S3ArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      BucketName: !Sub "talisker-ci-${ProjectName}"
+
+  EventTrigger:
+    Type: AWS::Events::Rule
+    DependsOn: [EventTriggerRole, CodePipeline]
+    Properties: 
+      ScheduleExpression: "cron(* * * * ? *)"  # every minute
+      State: ENABLED
+      Targets:
+        - Id: !Sub "${ProjectName}-event-trigger"
+          Arn: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${CodePipeline}"
+          RoleArn: !GetAtt EventTriggerRole.Arn
+
+  EventTriggerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-event-trigger-role"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [events.amazonaws.com]
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: EventsPolicy
+        PolicyDocument:
+          Statement:
+          - Action: ["codepipeline:StartPipelineExecution"]
+            Resource: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${CodePipeline}"
+            Effect: Allow
