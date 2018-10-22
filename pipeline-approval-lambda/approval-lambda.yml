@@ -44,8 +44,7 @@ Resources:
               }
               const response = await codepipeline.putApprovalResult(params).promise()
               console.log(response)
-          }
-                    
+          }                    
           
           async function getToken(pipelineName, stageName, actionName) {
               const state = await codepipeline.getPipelineState({name: pipelineName}).promise()
