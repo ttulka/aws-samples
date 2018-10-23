@@ -1,0 +1,66 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Enhance CF Macro."
+
+Resources:
+            
+  EnhanceMacro:
+    Type: AWS::CloudFormation::Macro
+    DependsOn: [EnhanceMacroLambda]
+    Properties:
+      Name: Enhance
+      FunctionName: !GetAtt EnhanceMacroLambda.Arn
+            
+  EnhanceMacroLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: [EnhanceMacroRole]
+    Properties:
+      FunctionName: enhance-macro
+      Runtime: nodejs8.10
+      Handler: index.handler
+      MemorySize: 1024
+      Timeout: 300
+      Role: !GetAtt EnhanceMacroRole.Arn
+      Code:
+        ZipFile: >
+          exports.handler = async function(event) {
+              console.log('EVENT', JSON.stringify(event))
+              
+              const fragment = event.params.Replacements
+                  .split(',')
+                  .map(repl => event.params.JsonString.replace('$$REPLACEMENT$$', repl))
+                  .map(frag => JSON.parse(frag))
+              
+              return {
+                  status: 'success', 
+                  requestId: event.requestId, 
+                  fragment 
+              }
+          }
+          
+  EnhanceMacroPermissions:
+    Type: AWS::Lambda::Permission
+    DependsOn: [EnhanceMacroLambda]
+    Properties:
+      Action: "lambda:InvokeFunction"
+      FunctionName: !GetAtt EnhanceMacroLambda.Arn
+      Principal: "cloudformation.amazonaws.com"
+          
+  EnhanceMacroRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: enhance-macro-role
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [lambda.amazonaws.com]
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: enhance-macro-role-policy
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Action: ["logs:*"]
+            Resource: "arn:aws:logs:*"
+            Effect: Allow

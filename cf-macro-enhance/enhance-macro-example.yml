@@ -1,0 +1,32 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Example usage of the enhance macro."
+
+Parameters:
+
+  AllowedBuckets:
+    Type: String
+    Description: Comma-separated values
+    Default: bucket1,bucket2
+    
+Resources:
+
+  S3Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: "s3-role"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [lambda.amazonaws.com]
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: "s3-policy"
+        PolicyDocument:
+          Statement: 
+            "Fn::Transform":
+            - Name: Enhance
+              Parameters:
+                JsonString: '{"Action":["s3:*"], "Resource":"arn:aws:s3:::$$REPLACEMENT$$", "Effect":"Allow"}'                        
+                Replacements: !Ref AllowedBuckets
