@@ -1,0 +1,66 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Example Stack"
+
+Parameters:
+
+  S3ArtifactBucket:
+    Type: String
+    Description: Artifact S3 bucket
+    
+  FirstLambdaS3Key:
+    Type: String
+    Description: Artifact object key
+    
+  SecondLambdaS3Key:
+    Type: String
+    Description: Artifact object key
+
+Resources:
+
+  FirstLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: [LambdaRole]
+    Properties:
+      FunctionName: "first-lambda"
+      Runtime: nodejs8.10
+      Handler: index.handler
+      MemorySize: 1024
+      Timeout: 120
+      Role: !GetAtt LambdaRole.Arn
+      Code:
+        S3Bucket: !Ref S3ArtifactBucket
+        S3Key: !Ref FirstLambdaS3Key
+
+  SecondLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: [LambdaRole]
+    Properties:
+      FunctionName: "first-lambda"
+      Runtime: nodejs8.10
+      Handler: index.handler
+      MemorySize: 1024
+      Timeout: 120
+      Role: !GetAtt LambdaRole.Arn
+      Code:
+        S3Bucket: !Ref S3ArtifactBucket
+        S3Key: !Ref SecondLambdaS3Key
+
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: "lambda-role"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [lambda.amazonaws.com]
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: "lambda-policy"
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Action: ["*"]
+            Resource: "*"
+            Effect: Allow

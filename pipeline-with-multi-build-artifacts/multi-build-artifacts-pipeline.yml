@@ -1,0 +1,245 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Multi-Build-Artifacts CI/CD Pipeline."
+
+Parameters:
+
+  ProjectName:
+    Type: String
+    Default: multi-build-test
+
+  CodeCommitRepoName:
+    Type: String
+    Description: "The CodeCommit repo name"
+    Default: multi-build-test
+  CodeCommitRepoBranch:
+    Type: String
+    Description: "The CodeCommit repo branch"
+    Default: master
+    
+Resources:
+
+  S3ArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      BucketName: !Sub "talisker-ci-${ProjectName}"
+
+  S3ArtifactBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    DependsOn: [S3ArtifactBucket, CodePipelineRole, CodeBuildRole]
+    Properties:
+      Bucket: !Ref S3ArtifactBucket
+      PolicyDocument:
+        Statement:
+        - Action: ["s3:*"]
+          Effect: Allow
+          Resource:
+          - !Sub "arn:aws:s3:::${S3ArtifactBucket}"
+          - !Sub "arn:aws:s3:::${S3ArtifactBucket}/*"
+          Principal:
+            AWS:
+            - !GetAtt CodePipelineRole.Arn
+            - !GetAtt CodeBuildRole.Arn
+
+  CodeBuild:
+    Type: AWS::CodeBuild::Project
+    DependsOn: [CodeBuildRole]
+    Properties:
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: "aws/codebuild/nodejs:10.1.0"
+        Type: LINUX_CONTAINER
+      Name: !Sub "${ProjectName}-codebuild"
+      ServiceRole: !Ref CodeBuildRole
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            build:
+              commands:
+                - cd first-lambda
+                - npm install
+                - npm run build          
+                - cd ../second-lambda
+                - npm install
+                - npm run build
+          artifacts:
+            secondary-artifacts:
+              BuildArtifactFirst:
+                base-directory: first-lambda/built
+                files: ['**/*']
+              BuildArtifactSecond:
+                base-directory: second-lambda/built
+                files: ['**/*']
+      TimeoutInMinutes: 5
+    
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-codebuild-role"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [codebuild.amazonaws.com]
+          Action: sts:AssumeRole
+
+  CodeBuildPolicy:
+    Type: AWS::IAM::Policy
+    DependsOn: [S3ArtifactBucket, CodeBuildRole]
+    Properties:
+      PolicyName: !Sub "${ProjectName}-codebuild-role-policy"
+      PolicyDocument:
+        Statement:
+        - Action: ["logs:CreateLogStream", "logs:PutLogEvents", "logs:CreateLogGroup"]
+          Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${ProjectName}*"
+          Effect: Allow
+      Roles: [!Ref CodeBuildRole]
+      
+  CodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    DependsOn: [CodePipelineRole, CodeBuild]
+    Properties:
+      Name: !Sub "${ProjectName}-pipeline"
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      RestartExecutionOnUpdate: true
+      Stages:
+      - Name: Source
+        Actions:
+        - Name: !Sub "${CodeCommitRepoName}@${CodeCommitRepoBranch}"
+          InputArtifacts: []
+          OutputArtifacts:
+          - Name: SourceArtifact
+          ActionTypeId:
+            Category: Source
+            Owner: AWS
+            Provider: CodeCommit
+            Version: 1
+          Configuration:
+            RepositoryName: !Ref CodeCommitRepoName
+            BranchName: !Ref CodeCommitRepoBranch
+          RunOrder: 1
+      - Name: Building
+        Actions:
+        - Name: build
+          InputArtifacts:
+          - Name: SourceArtifact
+          OutputArtifacts:
+          - Name: BuildArtifactFirst
+          - Name: BuildArtifactSecond
+          ActionTypeId:
+            Category: Build
+            Owner: AWS
+            Version: 1
+            Provider: CodeBuild
+          Configuration:
+            ProjectName: !Ref CodeBuild
+          RunOrder: 1
+      - Name: Staging
+        Actions:
+        - Name: stage-stack
+          InputArtifacts:
+          - Name: SourceArtifact
+          - Name: BuildArtifactFirst
+          - Name: BuildArtifactSecond
+          OutputArtifacts:
+          - Name: DeployArtifact
+          ActionTypeId:
+            Category: Deploy
+            Owner: AWS
+            Version: 1
+            Provider: CloudFormation
+          Configuration:
+            StackName: !Sub "${ProjectName}-stack"
+            ChangeSetName: !Sub "${ProjectName}-changeset"
+            ActionMode: CREATE_UPDATE
+            Capabilities: CAPABILITY_NAMED_IAM
+            TemplatePath: !Sub "SourceArtifact::stack/template.yml"
+            ParameterOverrides: !Sub |
+              {
+                "S3ArtifactBucket" : "${S3ArtifactBucket}",
+                "FirstLambdaS3Key" : { "Fn::GetArtifactAtt" : ["BuildArtifactFirst", "ObjectKey"] },
+                "SecondLambdaS3Key" : { "Fn::GetArtifactAtt" : ["BuildArtifactSecond", "ObjectKey"] },
+              }
+            RoleArn: !Ref CloudFormationRole
+          RunOrder: 1
+      ArtifactStore:
+        Type: S3
+        Location: !Ref S3ArtifactBucket
+        
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-codepipeline-role"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [codepipeline.amazonaws.com]
+          Action: sts:AssumeRole
+
+  CodePipelinePolicy:
+    Type: AWS::IAM::Policy
+    DependsOn: [S3ArtifactBucket, CodePipelineRole]
+    Condition: AddCrossAccountDependentResources
+    Properties:
+      PolicyName: !Sub "${ProjectName}-codepipeline-role-policy"
+      PolicyDocument:
+        Statement:
+        - Action: ["s3:*"]
+          Resource:
+          - !Sub "arn:aws:s3:::${S3ArtifactBucket}"
+          - !Sub "arn:aws:s3:::${S3ArtifactBucket}/*"
+          Effect: Allow
+        - Action: ["codecommit:*"]
+          Resource: !Sub "arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${CodeCommitRepoName}"
+          Effect: Allow
+        - Action: ["codebuild:*"]
+          Resource: !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/${ProjectName}*"
+          Effect: Allow
+        - Action: ["cloudformation:*"]
+          Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${ProjectName}*"
+          Effect: Allow
+        - Action: ["iam:PassRole", "iam:ListRoles"]
+          Resource: "*"
+          Effect: Allow
+        - Action: ["sts:AssumeRole"]
+          Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/${ProjectName}-*"
+          Effect: Allow
+      Roles: [!Ref CodePipelineRole]
+      
+  CloudFormationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-cloudformation-role"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [cloudformation.amazonaws.com]
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: CloudFormationPolicy
+        PolicyDocument:
+          Statement:
+          - Action: ["s3:*"]
+            Resource: "*"
+            Effect: Allow
+          - Action: ["iam:GetRole", "iam:CreateRole", "iam:DeleteRole", "iam:AttachRolePolicy", "iam:DetachRolePolicy", "iam:DeleteRolePolicy", "iam:PutRolePolicy", "iam:PassRole"]
+            Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/${ProjectName}*"
+            Effect: Allow
+          - Action: ["iam:PassRole"]
+            Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/*"
+            Effect: Allow
+          - Action: ["cloudformation:*"]
+            Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:aws:transform/*"
+            Effect: Allow
+          - Action: ["lambda:*"]
+            Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:*"
+            Effect: Allow
