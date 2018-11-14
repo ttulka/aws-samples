@@ -9,7 +9,7 @@ Parameters:
     MinLength: "1"
     MaxLength: "20"
     AllowedPattern: "[a-z0-9-]+"
-    ConstraintDescription: Malformed input parameter. TenantId must only contain 20 lower case letters, numbers, and -.
+    ConstraintDescription: Malformed input parameter. Must only contain 20 lower case letters, numbers, and -.
     Default: ttulka
 
 # TODO enable these params for a pipeline
