@@ -1,0 +1,443 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Dr. Cloud"
+
+Parameters:
+
+  ProjectName:
+    Type: String
+    Description: "Name of the project"
+    MinLength: 1
+    MaxLength: 10
+    AllowedPattern: "[a-z0-9-]+"
+    ConstraintDescription: "Must only contain 10 lower case letters, numbers, and -."
+    Default: dr-cloud
+
+Resources:
+
+  Bucket:
+    Type: AWS::S3::Bucket
+    DependsOn: [ImageEventHandlerLambda, ImageEventHandlerLambdaPermission]
+    Properties:
+      BucketName: !Sub "${ProjectName}-${AWS::AccountId}-${AWS::Region}"
+      NotificationConfiguration:
+        LambdaConfigurations:
+        - Event: "s3:ObjectCreated:*"
+          Function: !GetAtt ImageEventHandlerLambda.Arn
+        - Event: "s3:ObjectRemoved:*"
+          Function: !GetAtt ImageEventHandlerLambda.Arn
+
+  PatientTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    Properties:
+      AttributeDefinitions:
+      - AttributeName: patientId
+        AttributeType: S
+      KeySchema:
+      - AttributeName: patientId
+        KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 10
+        WriteCapacityUnits: 1
+
+  ImageTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    Properties:
+      AttributeDefinitions:
+      - AttributeName: imageId
+        AttributeType: S
+      - AttributeName: patientId
+        AttributeType: S
+      KeySchema:
+      - AttributeName: imageId
+        KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 10
+        WriteCapacityUnits: 1
+      GlobalSecondaryIndexes:
+      - IndexName: patientId_idx
+        KeySchema:
+        - AttributeName: patientId
+          KeyType: HASH
+        Projection:
+          ProjectionType: ALL
+        ProvisionedThroughput:
+          ReadCapacityUnits: 10
+          WriteCapacityUnits: 1
+
+  PatientServiceLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: [PatientServiceRole, PatientTable]
+    Properties:
+      FunctionName: !Sub "${ProjectName}-patient-service"
+      Runtime: nodejs8.10
+      Handler: index.handler
+      Environment:
+        Variables:
+          BUCKET: !Ref Bucket
+          PATIENT_TABLE: !Ref PatientTable
+      MemorySize: 1024
+      Timeout: 120
+      Role: !GetAtt PatientServiceRole.Arn
+      Code:
+        ZipFile: >
+          const PATIENT_TABLE = process.env.PATIENT_TABLE
+
+          const BUCKET = process.env.BUCKET
+
+          const uuidv1 = require('uuid/v1')
+
+          const AWS = require('aws-sdk')
+
+          const dynamoDb = new AWS.DynamoDB.DocumentClient({apiVersion: '2012-08-10'})
+
+          exports.handler = async function(payload) {
+              console.log("PAYLOAD", JSON.stringify(payload))
+
+              if ('list' === payload.action) {
+                  return await list()
+              } else if ('get' === payload.action) {
+                  if (payload.body && payload.body.patientId) {
+                      return await get(payload.body.patientId)
+                  } else {
+                      throw new Error('"patientId" missing in the body')
+                  }
+              } else if ('create' === payload.action) {
+                  if (payload.body && payload.body.givenName && payload.body.familyName) {
+                      return await create(payload.body.givenName, payload.body.familyName)
+                  } else {
+                      throw new Error('"givenName" or/and "familyName" missing in the body')
+                  }
+              } else if ('update' === payload.action) {
+                  if (payload.body && payload.body.patientId && payload.body.givenName && payload.body.familyName) {
+                      return await update(payload.body.patientId, payload.body.givenName, payload.body.familyName)
+                  } else {
+                      throw new Error('"patientId" or/and "givenName" or/and "familyName" missing in the body')
+                  }
+              } else if ('delete' === payload.action) {
+                  if (payload.body && payload.body.patientId) {
+                      return await remove(payload.body.patientId)
+                  } else {
+                      throw new Error('"patientId" missing in the body')
+                  }
+              } else {
+                  console.warn('Ignoring an unknown action:', payload.action)
+              }
+          }
+
+          async function list() {
+              const res = await dynamoDb.scan({
+                  TableName: PATIENT_TABLE
+              }).promise()
+
+              return res.Items ? res.Items.map(p => enrichWithStorage(p)) : []
+          }
+
+          async function get(patientId) {
+              const res = await dynamoDb.get({
+                  TableName: PATIENT_TABLE,
+                  Key: { patientId }
+              }).promise();
+
+              if (res.Item) {
+                  return enrichWithStorage(res.Item)
+              }
+              throw new Error('Cannot found a patient for patientId: ' + patientId)
+          }
+
+          async function create(givenName, familyName) {
+              const patient = {
+                  patientId: uuidv1(), givenName, familyName
+              }
+              const res = await dynamoDb.put({
+                  TableName: PATIENT_TABLE,
+                  Item: patient
+              }).promise();
+
+              if (res) {
+                  return enrichWithStorage(patient)
+              }
+              throw new Error('Cannot create a new patient: ' + JSON.stringify(patient))
+          }
+
+          async function update(patientId, givenName, familyName) {
+              const patient = {
+                  patientId, givenName, familyName
+              }
+              const res = await dynamoDb.update({
+                  TableName: PATIENT_TABLE,
+                  Key: { patientId },
+                  UpdateExpression: 'set givenName = :givenName, familyName = :familyName',
+                  ExpressionAttributeValues: {
+                      ':givenName': givenName,
+                      ':familyName': familyName
+                  }
+              }).promise();
+
+              if (res) {
+                  return enrichWithStorage(patient)
+              }
+              throw new Error('Cannot update a patient: ' + JSON.stringify(patient))
+          }
+
+          async function remove(patientId) {
+              await dynamoDb.delete({
+                  TableName: PATIENT_TABLE,
+                  Key: { patientId },
+              }).promise();
+          }
+
+          function enrichWithStorage(patient) {
+              return { ...patient, storage: {
+                  bucket: BUCKET,
+                  key: patient.patientId.substring(0, 8) + '/' + patient.patientId
+              } }
+          }
+
+  PatientServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-patient-service-role"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [lambda.amazonaws.com]
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: LambdaExecutionPolicy
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Action: ["logs:*"]
+            Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*"
+            Effect: Allow
+          - Action: ["dynamodb:Scan", "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem"]
+            Resource: !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${PatientTable}*"
+            Effect: Allow
+
+  ImageServiceLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: [ImageServiceRole, ImageTable]
+    Properties:
+      FunctionName: !Sub "${ProjectName}-image-service"
+      Runtime: nodejs8.10
+      Handler: index.handler
+      Environment:
+        Variables:
+          IMAGE_TABLE: !Ref ImageTable
+      MemorySize: 1024
+      Timeout: 120
+      Role: !GetAtt ImageServiceRole.Arn
+      Code:
+        ZipFile: >
+          const IMAGE_TABLE = process.env.IMAGE_TABLE
+
+          const AWS = require('aws-sdk')
+
+          const dynamoDb = new AWS.DynamoDB.DocumentClient({apiVersion: '2012-08-10'})
+
+          exports.handler = async function(payload) {
+              console.log("PAYLOAD", JSON.stringify(payload))
+
+              if ('list' === payload.action) {
+                  if (payload.body && payload.body.patientId) {
+                      return await list(payload.body.patientId)
+                  } else {
+                      throw new Error('"patientId" missing in the body')
+                  }
+              } else if ('get' === payload.action) {
+                  if (payload.body && payload.body.imageId) {
+                      return await get(payload.body.imageId)
+                  } else {
+                      throw new Error('"imageId" missing in the body')
+                  }
+              } else {
+                  console.warn('Ignoring an unknown action:', payload.action)
+              }
+          }
+
+          async function list(patientId) {
+              const res = await dynamoDb.query({
+                  TableName: IMAGE_TABLE,
+                  IndexName: 'patientId_idx',
+                  KeyConditionExpression: 'patientId = :patientId',
+                  ExpressionAttributeValues: {
+                      ':patientId': patientId
+                  }
+              }).promise()
+
+              return res.Items ? res.Items : []
+          }
+
+          async function get(imageId) {
+              const res = await dynamoDb.get({
+                  TableName: IMAGE_TABLE,
+                  Key: { imageId }
+              }).promise();
+
+              if (res.Item) {
+                  return res.Item
+              }
+              throw new Error('Cannot found an image for imageId: ' + imageId)
+          }
+
+  ImageServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-image-service-role"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [lambda.amazonaws.com]
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: LambdaExecutionPolicy
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Action: ["logs:*"]
+            Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*"
+            Effect: Allow
+          - Action: ["dynamodb:GetItem", "dynamodb:Query"]
+            Resource: !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ImageTable}*"
+            Effect: Allow
+
+  ImageEventHandlerLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: [ImageEventHandlerRole, ImageTable]
+    Properties:
+      FunctionName: !Sub "${ProjectName}-image-event-handler"
+      Runtime: nodejs8.10
+      Handler: index.handler
+      Environment:
+        Variables:
+          IMAGE_TABLE: !Ref ImageTable
+      MemorySize: 1024
+      Timeout: 120
+      Role: !GetAtt ImageEventHandlerRole.Arn
+      Code:
+        ZipFile: >
+          const IMAGE_TABLE = process.env.IMAGE_TABLE
+
+          const uuidv1 = require('uuid/v1')
+
+          const AWS = require('aws-sdk')
+
+          const dynamoDb = new AWS.DynamoDB.DocumentClient({apiVersion: '2012-08-10'})
+
+          exports.handler = async function(s3Event) {
+              console.log("EVENT", JSON.stringify(s3Event))
+
+              const rec = s3Event.Records[0]
+
+              if (rec.eventName.startsWith('ObjectCreated')) {
+                  await onCreated(rec.s3.bucket.name, rec.s3.object.key)
+              } else if (rec.eventName.startsWith('ObjectRemoved')) {
+                  await onDeleted(rec.s3.bucket.name, rec.s3.object.key)
+              } else {
+                  console.warn('Ignoring an unknown event:', rec.eventName)
+              }
+          }
+
+          async function onCreated(s3Bucket, s3Key) {
+              const [patientId, fileName] = parseS3Key(s3Key)
+              if (await findImageId(patientId, fileName)) {
+                  console.warn('Image already saved.')
+                  return
+              }
+              const imageId = uuidv1()
+
+              await dynamoDb.put({
+                  TableName: IMAGE_TABLE,
+                  Item: { imageId, patientId, fileName, s3Bucket, s3Key }
+              }).promise()
+          }
+
+          async function onDeleted(s3Bucket, s3Key) {
+              const [patientId, fileName] = parseS3Key(s3Key)
+              const imageId = await findImageId(patientId, fileName)
+
+              if (!imageId) {
+                  throw new Error('Cannot found an image for patientId: ' + patientId + ' and fileName: ' + fileName)
+              }
+              await dynamoDb.delete({
+                  TableName: IMAGE_TABLE,
+                  Key: { imageId },
+              }).promise()
+          }
+
+          async function findImageId(patientId, fileName) {
+              const res = await dynamoDb.query({
+                  TableName: IMAGE_TABLE,
+                  IndexName: 'patientId_idx',
+                  KeyConditionExpression: 'patientId = :patientId',
+                  FilterExpression: 'fileName = :fileName',
+                  ExpressionAttributeValues: {
+                      ':patientId': patientId,
+                      ':fileName': fileName
+                  }
+              }).promise()
+
+              return res.Items && res.Items.length ? res.Items[0].imageId : null
+          }
+
+          function parseS3Key(s3Key) {
+              // "hash/patientId/fileName"
+              const keyParts = /([^\/]+)\/([^\/]+)\/([^\/]+)/.exec(s3Key)
+              if (!keyParts) {
+                  throw new Error('Cannot process the S3 key: ' + s3Key)
+              }
+              return [keyParts[2], keyParts[3]]
+          }
+
+  ImageEventHandlerLambdaPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn: [ImageEventHandlerLambda]
+    Properties:
+        Action: "lambda:InvokeFunction"
+        FunctionName: !Ref ImageEventHandlerLambda
+        Principal: s3.amazonaws.com
+        SourceAccount: !Ref "AWS::AccountId"
+        SourceArn: !Sub "arn:aws:s3:::${ProjectName}-${AWS::AccountId}-${AWS::Region}"
+
+  ImageEventHandlerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-image-event-handler-role"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [lambda.amazonaws.com]
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: LambdaExecutionPolicy
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Action: ["logs:*"]
+            Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*"
+            Effect: Allow
+          - Action: ["dynamodb:PutItem", "dynamodb:DeleteItem", "dynamodb:Query"]
+            Resource: !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ImageTable}*"
+            Effect: Allow
+
+Outputs:
+
+  ImagesBucket:
+    Description: Images S3 Bucket
+    Value: !Ref Bucket
+
+  PatientServiceLambda:
+    Description: Patient Service Lambda
+    Value: !Ref PatientServiceLambda
+
+  ImageServiceLambda:
+    Description: Image Service Lambda
+    Value: !Ref ImageServiceLambda
