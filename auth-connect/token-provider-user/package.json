@@ -1,0 +1,30 @@
+{
+  "name": "auth-connect-token-provider-user",
+  "version": "1.0.0",
+  "main": "build/index.js",
+  "requires": true,
+  "scripts": {
+    "build": "grunt build",
+    "package": "grunt package",
+    "clean": "grunt clean",
+    "test": "jasmine-ts --config=jasmine.json"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.7",
+    "@types/aws-sdk": "^2.7.0",
+    "@types/jasmine": "^2.8.7",
+    "@types/node": "^10.3.5",
+    "grunt": "^1.0.3",
+    "grunt-aws-lambda-package": "0.0.6",
+    "grunt-contrib-clean": "^1.1.0",
+    "grunt-run": "^0.8.1",
+    "jasmine": "^3.1.0",
+    "jasmine-core": "^3.1.0",
+    "jasmine-ts": "^0.2.1",
+    "typescript": "^2.9.2"
+  },
+  "dependencies": {
+    "node-jose": "^1.1.0",
+    "uuidv1": "^1.6.14"
+  }
+}

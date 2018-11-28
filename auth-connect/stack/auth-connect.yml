@@ -1,0 +1,353 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "AuthConnect"
+
+Parameters:
+
+  Stage:
+    Type: String
+    Description: "Deployment stage name."
+    Default: dev
+
+  ProjectName:
+    Type: String
+    Description: "Name of the project."
+    MinLength: 1
+    MaxLength: 20
+    AllowedPattern: "[A-Za-z0-9-]+"
+    ConstraintDescription: "Malformed input parameter. ProjectName must only contain upper and lower case letters, numbers, and -."
+    Default: auth-connect
+
+  PrivateKey:
+    Type: String
+    Description: "Private encryption key in JWK format."
+
+  PublicKey:
+    Type: String
+    Description: "Public encryption key in JWK format."
+
+  OpenIdProviderUrl:
+    Type: String
+    Description: "OpenID provider URL."
+
+  ArtifactS3Bucket:
+    Type: String
+    Description: "Artifact S3 bucket."
+
+  TokenProviderUserLambdaS3Key:
+    Type: String
+    Description: "Artifact object key."
+  TokenProviderAppLambdaS3Key:
+    Type: String
+    Description: "Artifact object key."
+  TokenValidatorLambdaS3Key:
+    Type: String
+    Description: "Artifact object key."
+  ApiAuthorizerLambdaS3Key:
+    Type: String
+    Description: "Artifact object key."
+
+Resources:
+
+  TokenProviderUserLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: [TokenProviderUserLambdaRole]
+    Properties:
+      FunctionName: !Sub "${ProjectName}-token-provider-user-${AWS::Region}-${Stage}"
+      Role: !GetAtt TokenProviderUserLambdaRole.Arn
+      MemorySize: 1024
+      Timeout: 900
+      Runtime: nodejs8.10
+      Handler: index.handler
+      Environment:
+        Variables:
+          PRIVATE_KEY: !Ref PrivateKey
+          OPENID_PROVIDER_URL: !Ref OpenIdProviderUrl
+      Code:
+        S3Bucket: !Ref ArtifactS3Bucket
+        S3Key: !Ref TokenProviderUserLambdaS3Key
+
+  TokenProviderUserLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-token-provider-user-role-${AWS::Region}-${Stage}"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [lambda.amazonaws.com]
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: !Sub "${ProjectName}-token-provider-user-policy-${AWS::Region}-${Stage}"
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Action: ["logs:*"]
+            Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}*"
+            Effect: Allow
+
+  TokenProviderAppLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: [TokenProviderAppLambdaRole]
+    Properties:
+      FunctionName: !Sub "${ProjectName}-token-provider-app-${AWS::Region}-${Stage}"
+      Role: !GetAtt TokenProviderAppLambdaRole.Arn
+      MemorySize: 1024
+      Timeout: 900
+      Runtime: nodejs8.10
+      Handler: index.handler
+      Environment:
+        Variables:
+          PRIVATE_KEY: !Ref PrivateKey
+      Code:
+        S3Bucket: !Ref ArtifactS3Bucket
+        S3Key: !Ref TokenProviderAppLambdaS3Key
+
+  TokenProviderAppLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-token-provider-app-role-${AWS::Region}-${Stage}"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [lambda.amazonaws.com]
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: !Sub "${ProjectName}-token-provider-app-policy-${AWS::Region}-${Stage}"
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Action: ["logs:*"]
+            Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}*"
+            Effect: Allow
+
+  TokenValidatorLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: [TokenValidatorLambdaRole]
+    Properties:
+      FunctionName: !Sub "${ProjectName}-token-validator-${AWS::Region}-${Stage}"
+      Role: !GetAtt TokenValidatorLambdaRole.Arn
+      MemorySize: 1024
+      Timeout: 900
+      Runtime: nodejs8.10
+      Handler: index.handler
+      Environment:
+        Variables:
+          PUBLIC_KEY: !Ref PublicKey
+      Code:
+        S3Bucket: !Ref ArtifactS3Bucket
+        S3Key: !Ref TokenValidatorLambdaS3Key
+
+  TokenValidatorLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-token-validator-role-${AWS::Region}-${Stage}"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [lambda.amazonaws.com]
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: !Sub "${ProjectName}-token-validator-policy-${AWS::Region}-${Stage}"
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Action: ["logs:*"]
+            Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}*"
+            Effect: Allow
+
+  ApiAuthorizerLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: [ApiAuthorizerLambdaRole]
+    Properties:
+      FunctionName: !Sub "${ProjectName}-api-authorizer-${AWS::Region}-${Stage}"
+      Role: !GetAtt ApiAuthorizerLambdaRole.Arn
+      MemorySize: 1024
+      Timeout: 900
+      Runtime: nodejs8.10
+      Handler: index.handler
+      Environment:
+        Variables:
+          TOKEN_VALIDATOR_LAMBDA: !Ref TokenValidatorLambda
+      Code:
+        S3Bucket: !Ref ArtifactS3Bucket
+        S3Key: !Ref ApiAuthorizerLambdaS3Key
+
+  ApiAuthorizerLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-api-authorizer-role-${AWS::Region}-${Stage}"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: !Sub "${ProjectName}-api-authorizer-policy-${AWS::Region}-${Stage}"
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
+            Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}*"
+            Effect: Allow
+          - Action: ["lambda:invoke*"]
+            Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}*"
+            Effect: Allow
+
+  ApiAuthorizerInvocationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-api-authorizer-invocation-role-${AWS::Region}-${Stage}"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: apigateway.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: !Sub "${ProjectName}-api-authorizer-invocation-policy-${AWS::Region}-${Stage}"
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Effect: Allow
+            Action: lambda:InvokeFunction
+            Resource: '*'
+
+  Api:
+    Type: AWS::ApiGateway::RestApi
+    DependsOn: [ApiRole, TokenProviderUserLambda]
+    Properties:
+      Name: !Sub "${ProjectName}-api-${AWS::Region}-${Stage}"
+      Body:
+        swagger: "2.0"
+        info:
+          version: "2018-03-20T13:41:34Z"
+          title: auth-connect-api
+        basePath: "/"
+        schemes:
+        - "https"
+        paths:
+          /token:
+            get:
+              x-amazon-apigateway-integration:
+                uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${TokenProviderUserLambda}/invocations"
+                passthroughBehavior: "when_no_match"
+                httpMethod: "POST"
+                contentHandling: "CONVERT_TO_TEXT"
+                type: "aws_proxy"
+                credentials: !GetAtt ApiRole.Arn
+            options:
+              responses:
+                "200":
+                  headers:
+                    Access-Control-Allow-Origin:
+                      type: "string"
+                    Access-Control-Allow-Methods:
+                      type: "string"
+                    Access-Control-Allow-Headers:
+                      type: "string"
+              x-amazon-apigateway-integration:
+                responses:
+                  default:
+                    statusCode: "200"
+                    responseParameters:
+                      method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
+                      method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,x-api-key,x-amz-security-token,Auth'"
+                      method.response.header.Access-Control-Allow-Origin: "'*'"
+                requestTemplates:
+                  application/json: "{\"statusCode\":200}"
+                passthroughBehavior: when_no_match
+                type: mock
+          /token/app:
+            get:
+              x-amazon-apigateway-integration:
+                uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${TokenProviderAppLambda}/invocations"
+                passthroughBehavior: "when_no_match"
+                httpMethod: "POST"
+                contentHandling: "CONVERT_TO_TEXT"
+                type: "aws_proxy"
+                credentials: !GetAtt ApiRole.Arn
+            options:
+              responses:
+                "200":
+                  headers:
+                    Access-Control-Allow-Origin:
+                      type: "string"
+                    Access-Control-Allow-Methods:
+                      type: "string"
+                    Access-Control-Allow-Headers:
+                      type: "string"
+              x-amazon-apigateway-integration:
+                responses:
+                  default:
+                    statusCode: "200"
+                    responseParameters:
+                      method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
+                      method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,x-api-key,x-amz-security-token,Auth'"
+                      method.response.header.Access-Control-Allow-Origin: "'*'"
+                requestTemplates:
+                  application/json: "{\"statusCode\":200}"
+                passthroughBehavior: when_no_match
+                type: mock
+
+  ApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-api-role-${AWS::Region}-${Stage}"
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service:
+            - apigateway.amazonaws.com
+      Path: "/"
+      Policies:
+      - PolicyName: !Sub "${ProjectName}-api-policy-${AWS::Region}-${Stage}"
+        PolicyDocument:
+          Statement:
+          - Action: ["lambda:invoke*"]
+            Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}*"
+            Effect: Allow
+          - Action: ["cloudwatch:*"]
+            Resource: !Sub "arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:${ProjectName}*"
+            Effect: Allow
+
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: [Api]
+    Properties:
+      RestApiId: !Ref Api
+      StageName: !Ref Stage
+
+Outputs:
+
+  AuthConnectUrl:
+    Description: "URL of the AuthConnect API endpoint."
+    Value: !Join
+    - ''
+    - - https://
+      - !Ref Api
+      - '.execute-api.'
+      - !Ref 'AWS::Region'
+      - '.amazonaws.com/'
+      - !Ref Stage
+
+  ApiAuthorizerLambda:
+    Description: "Authorizer Lambda"
+    Value: !Ref ApiAuthorizerLambda
+    Export:
+      Name: !Sub "${AWS::StackName}-Lambda"
+
+  ApiAuthorizerInvocationRoleArn:
+    Description: "Authorizer Invocation Role Arn"
+    Value: !GetAtt ApiAuthorizerInvocationRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-InvocationRole-Arn"
