@@ -44,7 +44,7 @@ export class PoliciesGenerator {
     private getPoliciesForAdminRole(tenantId: string): Statement[] {
         return [
             this.allowMethod("GET", '/admin/*'),
-            this.allowMethod("POST", '/admin/*')
+            this.allowMethod("POST", '/admin/*'),
             this.allowMethod("PUT", '/admin/*'),
             this.allowMethod("DELETE", '/admin/*'),
             ...this.getPoliciesForServiceRole(tenantId),
