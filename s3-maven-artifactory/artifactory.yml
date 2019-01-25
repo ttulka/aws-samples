@@ -1,0 +1,66 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Simple Artifactory based on a S3 bucket"
+
+Resources:
+  
+  Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-${AWS::Region}"
+
+  User:
+    Type: AWS::IAM::User
+    DependsOn: Bucket
+    Properties:
+      Policies:
+        - PolicyName: artifactory-access-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action: ["s3:*"]
+                Resource:
+                  - !Sub "arn:aws:s3:::${AWS::StackName}-${AWS::Region}"
+                  - !Sub "arn:aws:s3:::${AWS::StackName}-${AWS::Region}/*"
+                Effect: Allow
+
+  AccessKey:
+    Type: AWS::IAM::AccessKey
+    DependsOn: User
+    Properties:
+      UserName: !Ref User
+
+  AccessKeyParam:
+    Type: AWS::SSM::Parameter
+    DependsOn: AccessKey
+    Properties:
+      Name: !Sub "${AWS::StackName}-access-key"
+      Type: String
+      Value: !Ref AccessKey
+
+  SecretAccessKeyParam:
+    Type: AWS::SSM::Parameter
+    DependsOn: AccessKey
+    Properties:
+      Name: !Sub "${AWS::StackName}-secret-access-key"
+      Type: String
+      Value: !GetAtt AccessKey.SecretAccessKey
+
+Outputs:
+
+  BucketName:
+    Description: Bucket
+    Value: !Ref Bucket
+    Export:
+      Name: !Sub "${AWS::StackName}-bucket"
+      
+  StoreAccessKeyName:
+    Description: Bucket
+    Value: !Ref AccessKeyParam
+    Export:
+      Name: !Sub "${AWS::StackName}-access-key"  
+
+  StoreSecretAccessKeyName:
+    Description: Bucket
+    Value: !Ref SecretAccessKeyParam
+    Export:
+      Name: !Sub "${AWS::StackName}-secret-access-key" 

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>cz.net21.ttulka.test</groupId>
+    <artifactId>test-project</artifactId>
+    <version>1.0</version>
+    <packaging>pom</packaging>
+
+    <distributionManagement>
+        <repository>
+            <id>s3-artifactory</id>
+            <url>s3://${ARTIFACTORY_BUCKET}</url>
+        </repository>
+    </distributionManagement>
+    <build>
+        <extensions>
+            <extension>
+                <groupId>com.github.platform-team</groupId>
+                <artifactId>aws-maven</artifactId>
+                <version>6.0.0</version>
+            </extension>
+        </extensions>
+    </build>
+</project>

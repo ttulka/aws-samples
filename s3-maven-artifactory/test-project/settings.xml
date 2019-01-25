@@ -1,0 +1,9 @@
+<settings>
+    <servers>
+        <server>
+            <id>s3-artifactory</id>
+            <username>${ARTIFACTORY_ACCESS_KEY}</username>
+            <password>${ARTIFACTORY_SECRET_ACCESS_KEY}</password>
+        </server>
+    </servers>
+</settings>
