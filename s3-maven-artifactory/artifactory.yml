@@ -6,7 +6,7 @@ Resources:
   Bucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub "${AWS::StackName}-${AWS::Region}"
+      BucketName: !Sub "${AWS::StackName}-${AWS::AccountId}"
 
   User:
     Type: AWS::IAM::User
@@ -19,8 +19,8 @@ Resources:
             Statement:
               - Action: ["s3:*"]
                 Resource:
-                  - !Sub "arn:aws:s3:::${AWS::StackName}-${AWS::Region}"
-                  - !Sub "arn:aws:s3:::${AWS::StackName}-${AWS::Region}/*"
+                  - !Sub "arn:aws:s3:::${AWS::StackName}-${AWS::AccountId}"
+                  - !Sub "arn:aws:s3:::${AWS::StackName}-${AWS::AccountId}/*"
                 Effect: Allow
 
   AccessKey:
