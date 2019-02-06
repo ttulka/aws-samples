@@ -1,0 +1,418 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "DataLake"
+
+Parameters:
+
+  Stage:
+    Type: String
+    Description: "Deployment stage name."
+    Default: dev
+
+  ArtifactS3Bucket:
+    Type: String
+    Description: "Artifact S3 bucket"
+
+  UploadPackageLambdaS3Key:
+    Type: String
+    Description: "Artifact object key"
+  DownloadPackageLambdaS3Key:
+    Type: String
+    Description: "Artifact object key"
+  SearchPackageLambdaS3Key:
+    Type: String
+    Description: "Artifact object key"
+  PublishPackageLambdaS3Key:
+    Type: String
+    Description: "Artifact object key"
+  TaggingServiceLambdaS3Key:
+    Type: String
+    Description: "Artifact object key"
+
+Resources:
+
+  KMSKey:
+    Type: AWS::KMS::Key
+    Description: "KMS DataLake Key"
+    Properties:
+      KeyPolicy:
+        Version: "2012-10-17"
+        Id: !Sub "${AWS::StackName}-key-${AWS::Region}-${Stage}"
+        Statement:
+          - Sid: Allows admin of the key
+            Effect: Allow
+            Principal:
+              AWS: "*"
+            Action: ["kms:*"]
+            Resource: "*"
+
+  KMSAlias:
+    Type: AWS::KMS::Alias
+    DependsOn: [KMSKey]
+    Properties:
+      AliasName: !Sub "alias/${AWS::StackName}-key-${AWS::Region}-${Stage}"
+      TargetKeyId: !Ref KMSKey
+
+  Bucket:
+    Type: AWS::S3::Bucket
+    DependsOn: [PublishPackageLambda, PublishPackageLambdaPermission]
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-${AWS::AccountId}-${AWS::Region}-${Stage}"
+      CorsConfiguration:
+        CorsRules:
+        - AllowedOrigins:
+          - "*"
+          AllowedMethods:
+          - "HEAD"
+          - "GET"
+          - "PUT"
+          - "POST"
+          AllowedHeaders:
+          - "*"
+      NotificationConfiguration:
+        LambdaConfigurations:
+        - Event: "s3:ObjectCreated:*"
+          Function: !GetAtt PublishPackageLambda.Arn
+      # TODO secure with KMS
+
+  PackageTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    Properties:
+      AttributeDefinitions:
+      - AttributeName: packageId
+        AttributeType: S
+      - AttributeName: tenantId
+        AttributeType: S
+      KeySchema:
+      - AttributeName: packageId
+        KeyType: HASH
+      - AttributeName: tenantId
+        KeyType: RANGE
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+
+  PackageCreatedTopic:
+    Type: AWS::SNS::Topic
+
+  # TODO auth secure this topic
+  PackageCreatedTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    DependsOn: [PackageCreatedTopic]
+    Properties:
+      Topics:
+        - !Ref PackageCreatedTopic
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Action: ["sns:Subscribe"]
+          Resource: !Ref PackageCreatedTopic
+          Principal: "*"
+          Effect: Allow
+
+  UploadPackageLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: [UploadPackageRole, PackageTable, Bucket, TaggingServiceLambda]
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-upload-package-${AWS::Region}-${Stage}"
+      Runtime: nodejs8.10
+      Handler: handler.handle
+      Environment:
+        Variables:
+          PACKAGE_TABLE: !Ref PackageTable
+          S3_BUCKET: !Ref Bucket
+          KMS_KEY_ID: !Ref KMSAlias
+          TAGGING_LAMBDA: !Ref TaggingServiceLambda
+      MemorySize: 1024
+      Timeout: 120
+      Role: !GetAtt UploadPackageRole.Arn
+      Code:
+        S3Bucket: !Ref ArtifactS3Bucket
+        S3Key: !Ref UploadPackageLambdaS3Key
+
+  UploadPackageRole:
+    Type: AWS::IAM::Role
+    DependsOn: [PackageTable, Bucket, TaggingServiceLambda]
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-upload-package-role-${AWS::Region}-${Stage}"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [lambda.amazonaws.com]
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaExecutionPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*"
+                Effect: Allow
+              - Action: ["dynamodb:*"]
+                Resource: !GetAtt PackageTable.Arn
+                Effect: Allow
+              - Action: ["s3:PutObject"]
+                Resource: !Sub "arn:aws:s3:::${AWS::StackName}-${AWS::AccountId}-${AWS::Region}-${Stage}/*"
+                Effect: Allow
+              - Action: ["lambda:InvokeFunction"]
+                Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${TaggingServiceLambda}*"
+                Effect: Allow
+
+  DownloadPackageLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: [DownloadPackageRole, PackageTable, Bucket, TaggingServiceLambda]
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-download-package-${AWS::Region}-${Stage}"
+      Runtime: nodejs8.10
+      Handler: handler.handle
+      Environment:
+        Variables:
+          PACKAGE_TABLE: !Ref PackageTable
+          KMS_KEY_ID: !Ref KMSAlias
+          TAGGING_LAMBDA: !Ref TaggingServiceLambda
+      MemorySize: 1024
+      Timeout: 120
+      Role: !GetAtt DownloadPackageRole.Arn
+      Code:
+        S3Bucket: !Ref ArtifactS3Bucket
+        S3Key: !Ref DownloadPackageLambdaS3Key
+
+  DownloadPackageRole:
+    Type: AWS::IAM::Role
+    DependsOn: [PackageTable, Bucket, TaggingServiceLambda]
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-download-package-role-${AWS::Region}-${Stage}"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [lambda.amazonaws.com]
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: LambdaExecutionPolicy
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
+            Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*"
+            Effect: Allow
+          - Action: ["dynamodb:*"]
+            Resource: !GetAtt PackageTable.Arn
+            Effect: Allow
+          - Action: ["s3:GetObject"]
+            Resource: !Sub "arn:aws:s3:::${AWS::StackName}-${AWS::AccountId}-${AWS::Region}-${Stage}/*"
+            Effect: Allow
+          - Action: ["lambda:InvokeFunction"]
+            Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${TaggingServiceLambda}*"
+            Effect: Allow
+
+  SearchPackageLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: [SearchPackageRole, PackageTable, Bucket, TaggingServiceLambda]
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-search-package-${AWS::Region}-${Stage}"
+      Runtime: nodejs8.10
+      Handler: handler.handle
+      Environment:
+        Variables:
+          PACKAGE_TABLE: !Ref PackageTable
+          KMS_KEY_ID: !Ref KMSAlias
+          TAGGING_LAMBDA: !Ref TaggingServiceLambda
+      MemorySize: 1024
+      Timeout: 120
+      Role: !GetAtt SearchPackageRole.Arn
+      Code:
+        S3Bucket: !Ref ArtifactS3Bucket
+        S3Key: !Ref SearchPackageLambdaS3Key
+
+  SearchPackageRole:
+    Type: AWS::IAM::Role
+    DependsOn: [PackageTable, Bucket, TaggingServiceLambda]
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-search-package-role-${AWS::Region}-${Stage}"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [lambda.amazonaws.com]
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaExecutionPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*"
+                Effect: Allow
+              - Action: ["dynamodb:*"]
+                Resource: !GetAtt PackageTable.Arn
+                Effect: Allow
+              - Action: ["s3:GetObject"]
+                Resource: !Sub "arn:aws:s3:::${AWS::StackName}-${AWS::AccountId}-${AWS::Region}-${Stage}/*"
+                Effect: Allow
+              - Action: ["lambda:InvokeFunction"]
+                Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${TaggingServiceLambda}*"
+                Effect: Allow
+
+  PublishPackageLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: [PublishPackageRole, PackageTable, PackageCreatedTopic]
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-publish-package-${AWS::Region}-${Stage}"
+      Runtime: nodejs8.10
+      Handler: handler.handle
+      Environment:
+        Variables:
+          PACKAGE_TABLE: !Ref PackageTable
+          TOPIC_ARN: !Ref PackageCreatedTopic
+      MemorySize: 1024
+      Timeout: 120
+      Role: !GetAtt PublishPackageRole.Arn
+      Code:
+        S3Bucket: !Ref ArtifactS3Bucket
+        S3Key: !Ref PublishPackageLambdaS3Key
+
+  PublishPackageLambdaPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn: [PublishPackageLambda]
+    Properties:
+        Action: "lambda:InvokeFunction"
+        FunctionName: !Ref PublishPackageLambda
+        Principal: s3.amazonaws.com
+        SourceAccount: !Ref "AWS::AccountId"
+        SourceArn: !Sub "arn:aws:s3:::${AWS::StackName}-${AWS::AccountId}-${AWS::Region}-${Stage}"
+
+  PublishPackageRole:
+    Type: AWS::IAM::Role
+    DependsOn: [PackageCreatedTopic]
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-publish-package-role-${AWS::Region}-${Stage}"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [lambda.amazonaws.com]
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: LambdaExecutionPolicy
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
+            Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*"
+            Effect: Allow
+          - Action: ["dynamodb:Query"]
+            Resource: !GetAtt PackageTable.Arn
+            Effect: Allow
+          - Action: ["sns:Publish"]
+            Resource: !Ref PackageCreatedTopic
+            Effect: Allow
+          - Action: ["s3:GetObject"] # the presigned s3 download url is signed with this role
+            Resource: !Sub "arn:aws:s3:::${AWS::StackName}-${AWS::AccountId}-${AWS::Region}-${Stage}/*"
+            Effect: Allow  
+
+  TaggingServiceLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: [TaggingServiceRole, TaggingElasticsearchCluster]
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-tagging-service-${AWS::Region}-${Stage}"
+      Runtime: nodejs8.10
+      Handler: index.handler
+      MemorySize: 1024
+      Timeout: 120
+      Role: !GetAtt TaggingServiceRole.Arn
+      Code:
+        S3Bucket: !Ref ArtifactS3Bucket
+        S3Key: !Ref TaggingServiceLambdaS3Key
+
+  TaggingServiceRole:
+    Type: AWS::IAM::Role
+    DependsOn: [TaggingElasticsearchCluster]
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-tagging-service-role-${AWS::Region}-${Stage}"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [lambda.amazonaws.com]
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub "${AWS::StackName}-tagging-service-policy-${AWS::Region}-${Stage}"
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*"
+                Effect: Allow
+
+Outputs:
+
+  PackageCreatedTopicArn:
+    Description: "Topic for events when a new DataLake package is created."
+    Value: !Ref PackageCreatedTopic
+    Export:
+      Name: !Sub "${AWS::StackName}-package-created-topic"
+
+  UploadPackageLambdaArn:
+    Description: "Upload Package Lambda Function Arn"
+    Value: !GetAtt UploadPackageLambda.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-upload-package-lambda"
+
+  DownloadPackageLambdaArn:
+    Description: "Download Package Lambda Function Arn"
+    Value: !GetAtt DownloadPackageLambda.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-download-package-lambda"
+
+  SearchPackageLambdaArn:
+    Description: "Search Package Lambda Function Arn"
+    Value: !GetAtt SearchPackageLambda.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-search-package-lambda"
+
+  PublishPackageLambdaArn:
+    Description: "Publish Package Lambda Function Arn"
+    Value: !GetAtt PublishPackageLambda.Arn
+
+  TaggingServiceLambdaArn:
+    Description: "Tagging Lambda Function Arn"
+    Value: !GetAtt TaggingServiceLambda.Arn
+
+  TaggingElasticsearchEndpoint:
+    Description: "Endpoint of the Elasticsearch cluster domain"
+    Value: !GetAtt TaggingElasticsearchCluster.DomainEndpoint
+
+Mappings:
+
+  RegionMap:
+    us-east-1:
+      "InstanceType": "t2.small.elasticsearch"
+      "DedicatedMasterType": "t2.small.elasticsearch"
+    us-east-2:
+      "InstanceType": "t2.small.elasticsearch"
+      "DedicatedMasterType": "t2.small.elasticsearch"
+    us-west-2:
+      "InstanceType": "t2.small.elasticsearch"
+      "DedicatedMasterType": "t2.small.elasticsearch"
+    eu-west-1:
+      "InstanceType": "t2.small.elasticsearch"
+      "DedicatedMasterType": "t2.small.elasticsearch"
+    eu-central-1:
+      "InstanceType": "t2.small.elasticsearch"
+      "DedicatedMasterType": "t2.small.elasticsearch"
+    ap-northeast-1:
+      "InstanceType": "t2.small.elasticsearch"
+      "DedicatedMasterType": "t2.small.elasticsearch"
+    ap-northeast-2:
+      "InstanceType": "t2.small.elasticsearch"
+      "DedicatedMasterType": "t2.small.elasticsearch"
+    ap-southeast-2:
+      "InstanceType": "t2.small.elasticsearch"
+      "DedicatedMasterType": "t2.small.elasticsearch"

@@ -1,0 +1,29 @@
+{
+  "body": null,
+  "pathParameters": {
+    "id": "XXX"
+  },
+  "queryStringParameters": {
+    "response-content-disposition": true
+  },
+  "resource": "/datalake/{packageId}",
+  "path": "/datalake/XXX",
+  "httpMethod": "GET",
+  "isBase64Encoded": true,
+  "requestContext": {
+    "authorizer": {
+      "tenantId": "TEST"
+    },
+    "accountId": "123456789012",
+    "resourceId": "123456",
+    "stage": "test",
+    "requestId": "test-request-id",
+    "requestTime": "09/Apr/2015:12:34:56 +0000",
+    "requestTimeEpoch": 1428582896000,
+    "path": "/datalake/XXX",
+    "resourcePath": "/datalake/{packageId}",
+    "httpMethod": "GET",
+    "apiId": "1234567890",
+    "protocol": "HTTP/1.1"
+  }
+}

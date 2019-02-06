@@ -1,0 +1,30 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - ls -la $CODEBUILD_SRC_DIR_SourceArtifact
+      - ls -la $CODEBUILD_SRC_DIR_DeployArtifactTest
+      - mkdir ~/bin
+      - curl http://stedolan.github.io/jq/download/linux64/jq -o ~/bin/jq
+      - chmod a+x ~/bin/jq
+
+  pre_build:
+    commands:
+      - cat $CODEBUILD_SRC_DIR_DeployArtifactTest/test-output.json
+      - UPLOAD_PACKAGE_LAMBDA=`cat $CODEBUILD_SRC_DIR_DeployArtifactTest/test-output.json | ~/bin/jq -r '.UploadPackageLambdaArn'`
+      - echo $UPLOAD_PACKAGE_LAMBDA
+      - DOWNLOAD_PACKAGE_LAMBDA=`cat $CODEBUILD_SRC_DIR_DeployArtifactTest/test-output.json | ~/bin/jq -r '.DownloadPackageLambdaArn'`
+      - echo $DOWNLOAD_PACKAGE_LAMBDA
+      - SEARCH_PACKAGE_LAMBDA=`cat $CODEBUILD_SRC_DIR_DeployArtifactTest/test-output.json | ~/bin/jq -r '.SearchPackageLambdaArn'`
+      - echo $SEARCH_PACKAGE_LAMBDA
+      - PUBLISH_PACKAGE_LAMBDA=`cat $CODEBUILD_SRC_DIR_DeployArtifactTest/test-output.json | ~/bin/jq -r '.PublishPackageLambdaArn'`
+      - echo PUBLISH_PACKAGE_LAMBDA
+      - TAGGING_SERVICE_LAMBDA=`cat $CODEBUILD_SRC_DIR_DeployArtifactTest/test-output.json | ~/bin/jq -r '.TaggingServiceLambdaArn'`
+      - echo TAGGING_SERVICE_LAMBDA
+
+  build:
+    commands:
+      - cd it-tests
+      - npm install
+      - npm test

@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "baseUrl": "src",
+    "outDir": "./build",
+    "lib": [
+      "es6"
+    ],
+    "module": "commonjs",
+    "target": "es6",
+    "alwaysStrict": true,
+    "noImplicitReturns": true,
+    "noImplicitThis": true,
+    "pretty": true
+  },
+  "include": [
+    "src/**/*.ts"
+  ]
+}

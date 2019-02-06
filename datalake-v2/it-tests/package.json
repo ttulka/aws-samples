@@ -1,0 +1,19 @@
+{
+  "name": "it-tests",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "jasmine-ts --config=./jasmine.json"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.18",
+    "@types/jasmine": "^3.3.8",
+    "@types/node": "^10.12.21",
+    "aws-sdk": "^2.395.0",
+    "jasmine": "^3.3.1",
+    "jasmine-ts": "^0.3.0",
+    "proxy-agent": "^3.0.3",
+    "ts-node": "^8.0.2",
+    "typescript": "^3.2.4"
+  },
+  "dependencies": {}
+}

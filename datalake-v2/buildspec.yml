@@ -1,0 +1,65 @@
+version: 0.2
+
+phases:
+
+  build:
+    commands:
+    - echo "upload-package building..."
+    - cd upload-package
+    - npm install
+    - npm test
+    - npm run package
+    - unzip -o -d out dist/upload-package.zip
+
+    - echo "upload-package building..."
+    - cd ../upload-package
+    - npm install
+    - npm test
+    - npm run package
+    - unzip -o -d out dist/upload-package.zip
+
+    - echo "download-package building..."
+    - cd ../download-package
+    - npm install
+    - npm test
+    - npm run package
+    - unzip -o -d out dist/download-package.zip
+
+    - echo "search-package building..."
+    - cd ../search-package
+    - npm install
+    - npm test
+    - npm run package
+    - unzip -o -d out dist/search-package.zip
+
+    - echo "publish-package building..."
+    - cd ../publish-package
+    - npm install
+    - npm test
+    - npm run package
+    - unzip -o -d out dist/publish-package.zip
+
+    - echo "tagging-service building..."
+    - cd ../tagging-service
+    - npm install
+    - npm test
+    - npm run package
+    - unzip -o -d out dist/tagging-service.zip
+
+artifacts:
+  secondary-artifacts:
+    BuildArtifactUploadPackage:
+      base-directory: upload-package/out
+      files: ['**/*']
+    BuildArtifactDownloadPackage:
+      base-directory: download-package/out
+      files: ['**/*']
+    BuildArtifactSearchPackage:
+      base-directory: search-package/out
+      files: ['**/*']
+    BuildArtifactPublishPackage:
+      base-directory: publish-package/out
+      files: ['**/*']
+    BuildArtifactTaggingService:
+      base-directory: tagging-service/out
+      files: ['**/*']

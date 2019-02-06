@@ -1,0 +1,38 @@
+{
+  "Records": [
+    {
+      "eventVersion": "2.1",
+      "eventSource": "aws:s3",
+      "awsRegion": "eu-central-1",
+      "eventTime": "2019-02-04T12:58:27.155Z",
+      "eventName": "ObjectCreated:Put",
+      "userIdentity": {
+        "principalId": "AWS:XXX:mp-datalake-upload-package-test"
+      },
+      "requestParameters": {
+        "sourceIPAddress": "000.000.00.000"
+      },
+      "responseElements": {
+        "x-amz-request-id": "XXX",
+        "x-amz-id-2": "XXX/XXX/XXX="
+      },
+      "s3": {
+        "s3SchemaVersion": "1.0",
+        "configurationId": "XXX",
+        "bucket": {
+          "name": "mp-datalake-test",
+          "ownerIdentity": {
+            "principalId": "ALVGPHTLG6LKD"
+          },
+          "arn": "arn:aws:s3:::mp-datalake-test"
+        },
+        "object": {
+          "key": "XXX/TEST/XXX-YYY-ZZZ",
+          "size": 0,
+          "eTag": "XXX",
+          "sequencer": "XXX"
+        }
+      }
+    }
+  ]
+}

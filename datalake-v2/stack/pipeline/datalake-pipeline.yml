@@ -1,0 +1,691 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "DataLake CI/CD Pipeline."
+
+Parameters:
+
+  ProductName:
+    Type: String
+    Description: "Name of the product."
+    MinLength: 1
+    MaxLength: 10
+    AllowedPattern: "[A-Za-z0-9-]+"
+    ConstraintDescription: "Malformed input parameter. ProductName must only contain upper and lower case letters, numbers, and -."
+    Default: mp # medical-platform
+
+  ProjectName:
+    Type: String
+    Description: "Name of the project."
+    MinLength: 1
+    MaxLength: 20
+    AllowedPattern: "[A-Za-z0-9-]+"
+    ConstraintDescription: "Malformed input parameter. ProjectName must only contain upper and lower case letters, numbers, and -."
+    Default: datalake
+
+  CodeCommitRepoName:
+    Type: String
+    Description: "The CodeCommit repo name"
+    Default: mp-datalake
+  CodeCommitRepoBranch:
+    Type: String
+    Description: "The CodeCommit repo branch"
+    Default: master
+
+  DevAccountId:
+    Type: String
+    Description: "The DEV Account ID"
+    AllowedPattern: "[0-9]+"
+    ConstraintDescription: "Account ID is a number"
+    Default: "057174153981"
+  RcAccountId:
+    Type: String
+    Description: "The RC Account ID"
+    AllowedPattern: "[0-9]+"
+    ConstraintDescription: "Account ID is a number"
+    Default: "056182315690"
+  QaAccountId:
+    Type: String
+    Description: "The QA Account ID"
+    AllowedPattern: "[0-9]+"
+    ConstraintDescription: "Account ID is a number"
+    Default: "264548621786"
+  ProdAccountId:
+    Type: String
+    Description: "The DEV Account ID"
+    AllowedPattern: "[0-9]+"
+    ConstraintDescription: "Account ID is a number"
+    Default: "499144324255"
+
+  CrossAccountRolesCreated:
+    Type: String
+    Description: "Were all the cross account roles already created?"
+    AllowedPattern: "true|false"
+    ConstraintDescription: "A boolean value"
+    Default: false
+
+Conditions:
+
+  AddCrossAccountDependentResources: !Equals [ !Ref CrossAccountRolesCreated, true ]
+
+Resources:
+
+  #####################################################################################
+  #### SECURITY #######################################################################
+  #####################################################################################
+
+  KMSKey:
+    Type: AWS::KMS::Key
+    DependsOn: [CodePipelineRole, CodeBuildRole]
+    Description: "Used to encrypt/decrypt pipeline artifacts"
+    Properties:
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Id: !Ref AWS::StackName
+        Statement:
+          - Sid: Allows admin of the key
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: ["kms:*"]
+            Resource: "*"
+          - Sid: Allow use of the key
+            Effect: Allow
+            Principal:
+              AWS:
+                - !GetAtt CodePipelineRole.Arn
+                - !GetAtt CodeBuildRole.Arn
+                - !Sub "arn:aws:iam::${DevAccountId}:root"
+                - !Sub "arn:aws:iam::${RcAccountId}:root"
+                - !Sub "arn:aws:iam::${QaAccountId}:root"
+                - !Sub "arn:aws:iam::${ProdAccountId}:root"
+                - !If [AddCrossAccountDependentResources, !Sub "arn:aws:iam::${DevAccountId}:role/${AWS::StackName}-cross-account-role", !Ref "AWS::NoValue"]
+                - !If [AddCrossAccountDependentResources, !Sub "arn:aws:iam::${DevAccountId}:role/${AWS::StackName}-cloudformation-role", !Ref "AWS::NoValue"]
+                - !If [AddCrossAccountDependentResources, !Sub "arn:aws:iam::${DevAccountId}:role/${AWS::StackName}-codebuild-test-role", !Ref "AWS::NoValue"]
+                - !If [AddCrossAccountDependentResources, !Sub "arn:aws:iam::${RcAccountId}:role/${AWS::StackName}-cross-account-role", !Ref "AWS::NoValue"]
+                - !If [AddCrossAccountDependentResources, !Sub "arn:aws:iam::${RcAccountId}:role/${AWS::StackName}-cloudformation-role", !Ref "AWS::NoValue"]
+                - !If [AddCrossAccountDependentResources, !Sub "arn:aws:iam::${QaAccountId}:role/${AWS::StackName}-cross-account-role", !Ref "AWS::NoValue"]
+                - !If [AddCrossAccountDependentResources, !Sub "arn:aws:iam::${QaAccountId}:role/${AWS::StackName}-cloudformation-role", !Ref "AWS::NoValue"]
+                - !If [AddCrossAccountDependentResources, !Sub "arn:aws:iam::${ProdAccountId}:role/${AWS::StackName}-cross-account-role", !Ref "AWS::NoValue"]
+                - !If [AddCrossAccountDependentResources, !Sub "arn:aws:iam::${ProdAccountId}:role/${AWS::StackName}-cloudformation-role", !Ref "AWS::NoValue"]
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+              - kms:DescribeKey
+            Resource: "*"
+
+  KMSAlias:
+    Type: AWS::KMS::Alias
+    DependsOn: [KMSKey]
+    Properties:
+      AliasName: !Sub "alias/${AWS::StackName}-key"
+      TargetKeyId: !Ref KMSKey
+
+  S3ArtifactBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    DependsOn: [S3ArtifactBucket, CodePipelineRole, CodeBuildRole]
+    Condition: AddCrossAccountDependentResources
+    Properties:
+      Bucket: !Ref S3ArtifactBucket
+      PolicyDocument:
+        Statement:
+          - Action: ["s3:*"]
+            Effect: Allow
+            Resource:
+              - !Sub "arn:aws:s3:::${S3ArtifactBucket}"
+              - !Sub "arn:aws:s3:::${S3ArtifactBucket}/*"
+            Principal:
+              AWS:
+                - !GetAtt CodePipelineRole.Arn
+                - !GetAtt CodeBuildRole.Arn
+                - !Sub "arn:aws:iam::${DevAccountId}:role/${AWS::StackName}-cross-account-role"
+                - !Sub "arn:aws:iam::${DevAccountId}:role/${AWS::StackName}-cloudformation-role"
+                - !Sub "arn:aws:iam::${DevAccountId}:role/${AWS::StackName}-codebuild-test-role"
+                - !Sub "arn:aws:iam::${RcAccountId}:role/${AWS::StackName}-cross-account-role"
+                - !Sub "arn:aws:iam::${RcAccountId}:role/${AWS::StackName}-cloudformation-role"
+                - !Sub "arn:aws:iam::${QaAccountId}:role/${AWS::StackName}-cross-account-role"
+                - !Sub "arn:aws:iam::${QaAccountId}:role/${AWS::StackName}-cloudformation-role"
+                - !Sub "arn:aws:iam::${ProdAccountId}:role/${AWS::StackName}-cross-account-role"
+                - !Sub "arn:aws:iam::${ProdAccountId}:role/${AWS::StackName}-cloudformation-role"
+
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-codebuild-role"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [codebuild.amazonaws.com]
+            Action: sts:AssumeRole
+
+  CodeBuildPolicy:
+    Type: AWS::IAM::Policy
+    DependsOn: [S3ArtifactBucket, CodeBuildRole, KMSKey]
+    Properties:
+      PolicyName: !Sub "${AWS::StackName}-codebuild-role-policy"
+      PolicyDocument:
+        Statement:
+          - Action: ["logs:CreateLogStream", "logs:PutLogEvents", "logs:CreateLogGroup"]
+            Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${AWS::StackName}*"
+            Effect: Allow
+          - Action: ["codecommit:CreateBranch", "codecommit:DeleteBranch", "codecommit:ListBranches"]
+            Resource: !Sub "arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${CodeCommitRepoName}*"
+            Effect: Allow
+          - Action: ["kms:Decrypt", "kms:Encrypt"]
+            Resource: !GetAtt KMSKey.Arn
+            Effect: Allow
+      Roles: [!Ref CodeBuildRole]
+
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-codepipeline-role"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [codepipeline.amazonaws.com]
+            Action: sts:AssumeRole
+
+  CodePipelinePolicy:
+    Type: AWS::IAM::Policy
+    DependsOn: [S3ArtifactBucket, CodePipelineRole]
+    Condition: AddCrossAccountDependentResources
+    Properties:
+      PolicyName: !Sub "${AWS::StackName}-codepipeline-role-policy"
+      PolicyDocument:
+        Statement:
+          - Action: ["s3:*"]
+            Resource:
+              - !Sub "arn:aws:s3:::${S3ArtifactBucket}"
+              - !Sub "arn:aws:s3:::${S3ArtifactBucket}/*"
+            Effect: Allow
+          - Action: ["kms:Decrypt", "kms:Encrypt"]
+            Resource: !GetAtt KMSKey.Arn
+            Effect: Allow
+          - Action: ["codecommit:CancelUploadArchive", "codecommit:GetBranch", "codecommit:GetCommit", "codecommit:GetUploadArchiveStatus", "codecommit:UploadArchive"]
+            Resource: !Sub "arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${CodeCommitRepoName}"
+            Effect: Allow
+          - Action: ["codebuild:StartBuild", "codebuild:BatchGetBuilds"]
+            Resource: !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/${AWS::StackName}*"
+            Effect: Allow
+          - Action: ["cloudformation:DescribeStacks", "cloudformation:DescribeChangeSet", "cloudformation:CreateChangeSet", "cloudformation:ExecuteChangeSet", "cloudformation:DeleteChangeSet"]
+            Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}*"
+            Effect: Allow
+          - Action: ["iam:PassRole", "iam:ListRoles"]
+            Resource: "*"
+            Effect: Allow
+          - Action: ["sts:AssumeRole"]
+            Resource:
+              - !Sub "arn:aws:iam::${DevAccountId}:role/${AWS::StackName}-*"
+              - !Sub "arn:aws:iam::${RcAccountId}:role/${AWS::StackName}-*"
+              - !Sub "arn:aws:iam::${QaAccountId}:role/${AWS::StackName}-*"
+              - !Sub "arn:aws:iam::${ProdAccountId}:role/${AWS::StackName}-*"
+            Effect: Allow
+      Roles: [!Ref CodePipelineRole]
+
+  #####################################################################################
+  #### PIPELINE #######################################################################
+  #####################################################################################
+
+  S3ArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      BucketName: !Sub "talisker-ci-${AWS::StackName}-${AWS::Region}"
+
+  CodeBuild:
+    Type: AWS::CodeBuild::Project
+    DependsOn: [CodeBuildRole]
+    Properties:
+      Name: !Sub "${AWS::StackName}-codebuild"
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: "aws/codebuild/nodejs:10.1.0"
+        Type: LINUX_CONTAINER
+      ServiceRole: !Ref CodeBuildRole
+      EncryptionKey: !GetAtt KMSKey.Arn
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: "buildspec.yml"
+      TimeoutInMinutes: 5
+
+  CodeBuildCommitResolving:
+    Type: AWS::CodeBuild::Project
+    DependsOn: [CodeBuildRole]
+    Properties:
+      Name: !Sub "${AWS::StackName}-codebuild-commit-resolving-build"
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: "aws/codebuild/ubuntu-base:14.04"
+        Type: LINUX_CONTAINER
+      ServiceRole: !Ref CodeBuildRole
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            build:
+              commands:
+                - echo "Saving $CODEBUILD_RESOLVED_SOURCE_VERSION into a commit.id file..."
+                - echo $CODEBUILD_RESOLVED_SOURCE_VERSION > commit.id
+          artifacts:
+            files: ['commit.id']
+      TimeoutInMinutes: 5
+
+  CodeBuildBranching:
+    Type: AWS::CodeBuild::Project
+    DependsOn: [CodeBuildRole]
+    Properties:
+      Name: !Sub "${AWS::StackName}-codebuild-branching-build"
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: "aws/codebuild/ubuntu-base:14.04"
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - Name: REPO_NAME
+            Value: !Ref CodeCommitRepoName
+          - Name: BRANCH_NAME
+            Value: release
+      ServiceRole: !Ref CodeBuildRole
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            pre_build:
+              commands:
+                - echo "Deleting the previous release branch..."
+                - aws codecommit delete-branch --repository-name $REPO_NAME --branch-name $BRANCH_NAME
+            build:
+              commands:
+                - echo "Creating a new release branch..."
+                - COMMIT_ID=`cat commit.id`
+                - aws codecommit create-branch --repository-name $REPO_NAME --branch-name $BRANCH_NAME --commit-id $COMMIT_ID
+      TimeoutInMinutes: 5
+
+  CodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    DependsOn: [CodePipelineRole, CodePipelinePolicy, CodeBuildCommitResolving, CodeBuildBranching, CodeBuild]
+    Condition: AddCrossAccountDependentResources
+    Properties:
+      Name: !Sub "${ProductName}-${ProjectName}-pipeline"
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      RestartExecutionOnUpdate: true
+      ArtifactStore:
+        Type: S3
+        Location: !Ref S3ArtifactBucket
+        EncryptionKey:
+          Id: !GetAtt KMSKey.Arn
+          Type: KMS
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: !Sub "${CodeCommitRepoName}@${CodeCommitRepoBranch}"
+              InputArtifacts: []
+              OutputArtifacts:
+                - Name: SourceArtifact
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeCommit
+                Version: 1
+              Configuration:
+                RepositoryName: !Ref CodeCommitRepoName
+                BranchName: !Ref CodeCommitRepoBranch
+                PollForSourceChanges: false
+              RunOrder: 1
+        - Name: Building
+          Actions:
+            - Name: build
+              InputArtifacts:
+                - Name: SourceArtifact
+              OutputArtifacts:
+                - Name: BuildArtifactUploadPackage
+                - Name: BuildArtifactDownloadPackage
+                - Name: BuildArtifactSearchPackage
+                - Name: BuildArtifactPublishPackage
+                - Name: BuildArtifactTaggingService
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+              Configuration:
+                ProjectName: !Ref CodeBuild
+              RunOrder: 1
+            - Name: commit-resolving
+              InputArtifacts:
+                - Name: SourceArtifact
+              OutputArtifacts:
+                - Name: BuildArtifactCommitResolving
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+              Configuration:
+                ProjectName: !Ref CodeBuildCommitResolving
+              RunOrder: 2
+        - Name: Testing   # as long as we go with only dev stage, blue-stacks will be deploy as "test" and green as "dev"
+          Actions:
+            - Name: stage-test
+              InputArtifacts:
+                - Name: SourceArtifact
+                - Name: BuildArtifactUploadPackage
+                - Name: BuildArtifactDownloadPackage
+                - Name: BuildArtifactSearchPackage
+                - Name: BuildArtifactPublishPackage
+                - Name: BuildArtifactTaggingService
+              OutputArtifacts:
+                - Name: DeployArtifactTest
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CloudFormation
+              Configuration:
+                StackName: !Sub "${ProductName}-${ProjectName}-test"
+                ChangeSetName: !Sub "${ProductName}-${ProjectName}-test-changeset"
+                ActionMode: CREATE_UPDATE
+                Capabilities: CAPABILITY_NAMED_IAM
+                TemplatePath: !Sub "SourceArtifact::stack/cloudformation.yml"
+                OutputFileName: "test-output.json"
+                ParameterOverrides: !Sub |
+                  {
+                    "Stage" : "test",
+                    "ArtifactS3Bucket" : "${S3ArtifactBucket}",
+                    "UploadPackageLambdaS3Key" : { "Fn::GetArtifactAtt" : ["BuildArtifactUploadPackage", "ObjectKey"] },
+                    "DownloadPackageLambdaS3Key" : { "Fn::GetArtifactAtt" : ["BuildArtifactDownloadPackage", "ObjectKey"] },
+                    "SearchPackageLambdaS3Key" : { "Fn::GetArtifactAtt" : ["BuildArtifactSearchPackage", "ObjectKey"] },
+                    "PublishPackageLambdaS3Key" : { "Fn::GetArtifactAtt" : ["BuildArtifactPublishPackage", "ObjectKey"] },
+                    "TaggingServiceLambdaS3Key" : { "Fn::GetArtifactAtt" : ["BuildArtifactTaggingService", "ObjectKey"] }
+                  }
+                RoleArn: !Sub "arn:aws:iam::${DevAccountId}:role/${AWS::StackName}-cloudformation-role"
+              RoleArn: !Sub "arn:aws:iam::${DevAccountId}:role/${AWS::StackName}-cross-account-role"
+              RunOrder: 1
+            - Name: integration-tests
+              InputArtifacts:
+                - Name: SourceArtifact
+                - Name: DeployArtifactTest
+              OutputArtifacts: []
+              ActionTypeId:
+                Category: Test
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+              Configuration:
+                ProjectName: !Sub "${AWS::StackName}-codebuild-test"
+                PrimarySource: SourceArtifact
+              RoleArn: !Sub "arn:aws:iam::${DevAccountId}:role/${AWS::StackName}-cross-account-role"
+              RunOrder: 4
+            - Name: delete-stage-test
+              InputArtifacts: []
+              OutputArtifacts: []
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CloudFormation
+              Configuration:
+                StackName: !Sub "${ProductName}-${ProjectName}-test"
+                ActionMode: DELETE_ONLY
+                Capabilities: CAPABILITY_NAMED_IAM
+                RoleArn: !Sub "arn:aws:iam::${DevAccountId}:role/${AWS::StackName}-cloudformation-role"
+              RoleArn: !Sub "arn:aws:iam::${DevAccountId}:role/${AWS::StackName}-cross-account-role"
+              RunOrder: 5
+        - Name: StagingDev
+          Actions:
+            - Name: stage-dev
+              InputArtifacts:
+                - Name: SourceArtifact
+                - Name: BuildArtifactUploadPackage
+                - Name: BuildArtifactDownloadPackage
+                - Name: BuildArtifactSearchPackage
+                - Name: BuildArtifactPublishPackage
+                - Name: BuildArtifactTaggingService
+              OutputArtifacts:
+                - Name: DeployArtifactDev
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CloudFormation
+              Configuration:
+                StackName: !Sub "${ProductName}-${ProjectName}-dev"
+                ChangeSetName: !Sub "${ProductName}-${ProjectName}-dev-changeset"
+                ActionMode: CREATE_UPDATE
+                Capabilities: CAPABILITY_NAMED_IAM
+                TemplatePath: !Sub "SourceArtifact::stack/cloudformation.yml"
+                OutputFileName: "dev-output.json"
+                ParameterOverrides: !Sub |
+                  {
+                    "Stage" : "dev",
+                    "ArtifactS3Bucket" : "${S3ArtifactBucket}",
+                    "UploadPackageLambdaS3Key" : { "Fn::GetArtifactAtt" : ["BuildArtifactUploadPackage", "ObjectKey"] },
+                    "DownloadPackageLambdaS3Key" : { "Fn::GetArtifactAtt" : ["BuildArtifactDownloadPackage", "ObjectKey"] },
+                    "SearchPackageLambdaS3Key" : { "Fn::GetArtifactAtt" : ["BuildArtifactSearchPackage", "ObjectKey"] },
+                    "PublishPackageLambdaS3Key" : { "Fn::GetArtifactAtt" : ["BuildArtifactPublishPackage", "ObjectKey"] },
+                    "TaggingServiceLambdaS3Key" : { "Fn::GetArtifactAtt" : ["BuildArtifactTaggingService", "ObjectKey"] }
+                  }
+                RoleArn: !Sub "arn:aws:iam::${DevAccountId}:role/${AWS::StackName}-cloudformation-role"
+              RoleArn: !Sub "arn:aws:iam::${DevAccountId}:role/${AWS::StackName}-cross-account-role"
+              RunOrder: 6
+        - Name: StagingRC
+          Actions:
+            - Name: approval
+              InputArtifacts: []
+              OutputArtifacts: []
+              ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Version: 1
+                Provider: Manual
+              Configuration:
+                CustomData: "Approval to deploy to the RC stage."
+              RunOrder: 1
+            - Name: stage-rc
+              InputArtifacts:
+                - Name: SourceArtifact
+                - Name: BuildArtifactUploadPackage
+                - Name: BuildArtifactDownloadPackage
+                - Name: BuildArtifactSearchPackage
+                - Name: BuildArtifactPublishPackage
+                - Name: BuildArtifactTaggingService
+              OutputArtifacts:
+                - Name: DeployArtifactRc
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CloudFormation
+              Configuration:
+                StackName: !Sub "${ProductName}-${ProjectName}-rc"
+                ChangeSetName: !Sub "${ProductName}-${ProjectName}-rc-changeset"
+                ActionMode: CREATE_UPDATE
+                Capabilities: CAPABILITY_NAMED_IAM
+                TemplatePath: !Sub "SourceArtifact::stack/cloudformation.yml"
+                OutputFileName: "rc-output.json"
+                ParameterOverrides: !Sub |
+                  {
+                    "Stage" : "rc",
+                    "ArtifactS3Bucket" : "${S3ArtifactBucket}",
+                    "UploadPackageLambdaS3Key" : { "Fn::GetArtifactAtt" : ["BuildArtifactUploadPackage", "ObjectKey"] },
+                    "DownloadPackageLambdaS3Key" : { "Fn::GetArtifactAtt" : ["BuildArtifactDownloadPackage", "ObjectKey"] },
+                    "SearchPackageLambdaS3Key" : { "Fn::GetArtifactAtt" : ["BuildArtifactSearchPackage", "ObjectKey"] },
+                    "PublishPackageLambdaS3Key" : { "Fn::GetArtifactAtt" : ["BuildArtifactPublishPackage", "ObjectKey"] },
+                    "TaggingServiceLambdaS3Key" : { "Fn::GetArtifactAtt" : ["BuildArtifactTaggingService", "ObjectKey"] }
+                  }
+                RoleArn: !Sub "arn:aws:iam::${RcAccountId}:role/${AWS::StackName}-cloudformation-role"
+              RoleArn: !Sub "arn:aws:iam::${RcAccountId}:role/${AWS::StackName}-cross-account-role"
+              RunOrder: 2
+        - Name: StagingQA
+          Actions:
+            - Name: approval
+              InputArtifacts: []
+              OutputArtifacts: []
+              ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Version: 1
+                Provider: Manual
+              Configuration:
+                CustomData: "Approval to deploy to the QA stage."
+              RunOrder: 1
+            - Name: stage-qa
+              InputArtifacts:
+                - Name: SourceArtifact
+                - Name: BuildArtifactUploadPackage
+                - Name: BuildArtifactDownloadPackage
+                - Name: BuildArtifactSearchPackage
+                - Name: BuildArtifactPublishPackage
+                - Name: BuildArtifactTaggingService
+              OutputArtifacts:
+                - Name: DeployArtifactQa
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CloudFormation
+              Configuration:
+                StackName: !Sub "${ProductName}-${ProjectName}-qa"
+                ChangeSetName: !Sub "${ProductName}-${ProjectName}-qa-changeset"
+                ActionMode: CREATE_UPDATE
+                Capabilities: CAPABILITY_NAMED_IAM
+                TemplatePath: !Sub "SourceArtifact::stack/cloudformation.yml"
+                OutputFileName: "qa-output.json"
+                ParameterOverrides: !Sub |
+                  {
+                    "Stage" : "qa",
+                    "ArtifactS3Bucket" : "${S3ArtifactBucket}",
+                    "UploadPackageLambdaS3Key" : { "Fn::GetArtifactAtt" : ["BuildArtifactUploadPackage", "ObjectKey"] },
+                    "DownloadPackageLambdaS3Key" : { "Fn::GetArtifactAtt" : ["BuildArtifactDownloadPackage", "ObjectKey"] },
+                    "SearchPackageLambdaS3Key" : { "Fn::GetArtifactAtt" : ["BuildArtifactSearchPackage", "ObjectKey"] },
+                    "PublishPackageLambdaS3Key" : { "Fn::GetArtifactAtt" : ["BuildArtifactPublishPackage", "ObjectKey"] },
+                    "TaggingServiceLambdaS3Key" : { "Fn::GetArtifactAtt" : ["BuildArtifactTaggingService", "ObjectKey"] }
+                  }
+                RoleArn: !Sub "arn:aws:iam::${QaAccountId}:role/${AWS::StackName}-cloudformation-role"
+              RoleArn: !Sub "arn:aws:iam::${QaAccountId}:role/${AWS::StackName}-cross-account-role"
+              RunOrder: 2
+        - Name: StagingProd
+          Actions:
+            - Name: approval
+              InputArtifacts: []
+              OutputArtifacts: []
+              ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Version: 1
+                Provider: Manual
+              Configuration:
+                CustomData: "Approval to deploy to the Prod stage."
+              RunOrder: 1
+            - Name: stage-prod
+              InputArtifacts:
+                - Name: SourceArtifact
+                - Name: BuildArtifactUploadPackage
+                - Name: BuildArtifactDownloadPackage
+                - Name: BuildArtifactSearchPackage
+                - Name: BuildArtifactPublishPackage
+                - Name: BuildArtifactTaggingService
+              OutputArtifacts:
+                - Name: DeployArtifactProd
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CloudFormation
+              Configuration:
+                StackName: !Sub "${ProductName}-${ProjectName}-prod"
+                ChangeSetName: !Sub "${ProductName}-${ProjectName}-prod-changeset"
+                ActionMode: CREATE_UPDATE
+                Capabilities: CAPABILITY_NAMED_IAM
+                TemplatePath: !Sub "SourceArtifact::stack/cloudformation.yml"
+                OutputFileName: "prod-output.json"
+                ParameterOverrides: !Sub |
+                  {
+                    "Stage" : "prod",
+                    "ArtifactS3Bucket" : "${S3ArtifactBucket}",
+                    "UploadPackageLambdaS3Key" : { "Fn::GetArtifactAtt" : ["BuildArtifactUploadPackage", "ObjectKey"] },
+                    "DownloadPackageLambdaS3Key" : { "Fn::GetArtifactAtt" : ["BuildArtifactDownloadPackage", "ObjectKey"] },
+                    "SearchPackageLambdaS3Key" : { "Fn::GetArtifactAtt" : ["BuildArtifactSearchPackage", "ObjectKey"] },
+                    "PublishPackageLambdaS3Key" : { "Fn::GetArtifactAtt" : ["BuildArtifactPublishPackage", "ObjectKey"] },
+                    "TaggingServiceLambdaS3Key" : { "Fn::GetArtifactAtt" : ["BuildArtifactTaggingService", "ObjectKey"] }
+                  }
+                RoleArn: !Sub "arn:aws:iam::${ProdAccountId}:role/${AWS::StackName}-cloudformation-role"
+              RoleArn: !Sub "arn:aws:iam::${ProdAccountId}:role/${AWS::StackName}-cross-account-role"
+              RunOrder: 2
+            - Name: release-branching
+              InputArtifacts:
+                - Name: BuildArtifactCommitResolving
+              OutputArtifacts: []
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+              Configuration:
+                ProjectName: !Ref CodeBuildBranching
+              RunOrder: 4
+
+  CloudWatchEventRole:
+    Type: AWS::IAM::Role
+    DependsOn: [CodePipeline]
+    Condition: AddCrossAccountDependentResources
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-cloudwatch-pulling-role"
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [events.amazonaws.com]
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: cwe-pipeline-execution
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: "codepipeline:StartPipelineExecution"
+                Resource: !Join [ '', [ 'arn:aws:codepipeline:', !Ref 'AWS::Region', ':', !Ref 'AWS::AccountId', ':', !Ref CodePipeline ] ]
+
+  CloudWatchEventRule:
+    Type: AWS::Events::Rule
+    DependsOn: [CloudWatchEventRole, CodePipeline]
+    Condition: AddCrossAccountDependentResources
+    Properties:
+      EventPattern:
+        source: [aws.codecommit]
+        detail-type: ['CodeCommit Repository State Change']
+        resources:
+          - !Join [ '', [ 'arn:aws:codecommit:', !Ref 'AWS::Region', ':', !Ref 'AWS::AccountId', ':', !Ref CodeCommitRepoName ] ]
+        detail:
+          event:
+            - referenceCreated
+            - referenceUpdated
+          referenceType:
+            - branch
+          referenceName:
+            - !Ref CodeCommitRepoBranch
+      Targets:
+        - Arn:
+            !Join [ '', [ 'arn:aws:codepipeline:', !Ref 'AWS::Region', ':', !Ref 'AWS::AccountId', ':', !Ref CodePipeline ] ]
+          RoleArn: !GetAtt CloudWatchEventRole.Arn
+          Id: !Sub "${AWS::StackName}-pipeline"
+
+Outputs:
+  KMSKey:
+    Description: "KMS Key for code pipeline"
+    Value: !GetAtt KMSKey.Arn
