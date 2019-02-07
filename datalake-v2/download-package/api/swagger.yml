@@ -1,0 +1,60 @@
+swagger: "2.0"
+info:
+  version: "2018-03-20T13:41:34Z"
+  title: "mp-datalake-download"
+basePath: /datalake
+schemes:
+  - https
+paths:
+  /:
+    get:
+      description: "Download package"
+      parameters:
+      - name: packageId
+        in: path
+        type: string
+        description: "The package ID"
+        required: true
+      - name: responseContentDisposition
+        in: query
+        type: boolean
+        description: "The responseContentDisposition for S3"
+      responses:
+        200:
+          description: "Downloaded package"
+          schema:
+            type: object
+            properties:
+              packageId:
+                type: string
+                description: "Package ID"
+              tenantId:
+                type: string
+                description: "Tenant ID"
+              createdAt:
+                type: string
+                description: "Created at description"
+              type:
+                type: string
+                description: "Type"
+              contentType:
+                type: string
+                description: "ContentType"
+              downloadUrl:
+                type: string
+                description: "Download URL"
+              tags:
+                type: array
+                description: "Tags"
+                items:
+                  $ref: '#/definitions/Tag'
+
+definitions:
+  Tag:
+    type: object
+    description: "Response tags, this field is not always set"
+    properties:
+      key:
+        type: string
+      value:
+        type: string

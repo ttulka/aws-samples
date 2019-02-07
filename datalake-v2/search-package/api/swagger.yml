@@ -1,0 +1,50 @@
+swagger: "2.0"
+info:
+  version: "2018-03-20T13:41:34Z"
+  title: "mp-datalake-search"
+basePath: /datalake
+schemes:
+  - https
+paths:
+  /search:
+    post:
+      description: "Search package"
+      parameters:
+        - in: body
+          name: "Search request"
+          schema:
+            type: object
+            required:
+              - tags
+            properties:
+              tags:
+                type: array
+                items:
+                  $ref: '#/definitions/Tag'
+      responses:
+        200:
+          description: "List of Package IDs"
+          schema:
+            type: object
+            properties:
+              tags:
+                type: array
+                items:
+
+definitions:
+  Tag:
+    type: object
+    description: "Response tags"
+    properties:
+      key:
+        type: string
+      value:
+        type: string
+  PackageId:
+    type: string
+    description: "Package ID"
+    properties:
+      key:
+        type: string
+      value:
+        type: string
