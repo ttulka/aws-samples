@@ -28,12 +28,12 @@ export class PackageUpload {
         }
         return {
             packageId: packageEntry.packageId,
-            uploadUrl: await this.uploadUrl(packageEntry, this.KMS_KEY_ID)
+            uploadUrl: this.uploadUrl(packageEntry, this.KMS_KEY_ID)
         };
     }
 
-    private async uploadUrl(packageEntry: PackageEntry, keyId: string): Promise<string> {
+    private uploadUrl(packageEntry: PackageEntry, keyId: string): string {
         return this.packageStorage.packageObject(packageEntry.bucket, packageEntry.objectKey)
-            .uploadUrl(this.KMS_KEY_ID);
+            .uploadUrl(keyId);
     }
 }

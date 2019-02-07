@@ -3,5 +3,5 @@ export interface PackageStorage {
 }
 
 export interface PackageObject {
-    downloadUrl(cryptoKeyId: string, contentDisposition: string): string;
+    downloadUrl(): string;
 }

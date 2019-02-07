@@ -25,14 +25,14 @@ export class PackageDownload {
             createdAt: packageEntry.createdAt,
             type: packageEntry.type,
             contentType: packageEntry.contentType,
-            downloadUrl: await this.downloadUrl(packageEntry, responseContentDisposition),
+            downloadUrl: this.downloadUrl(packageEntry, this.KMS_KEY_ID, responseContentDisposition),
             tags: await this.tags(tenantId, packageId)
         };
     }
 
-    private async downloadUrl(packageEntry: PackageEntry, responseContentDisposition: string): Promise<string> {
+    private downloadUrl(packageEntry: PackageEntry, keyId: string, responseContentDisposition: string): string {
         return this.packageStorage.packageObject(packageEntry.bucket, packageEntry.objectKey)
-            .downloadUrl(this.KMS_KEY_ID, responseContentDisposition);
+            .downloadUrl(keyId, responseContentDisposition);
     }
 
     private async tags(tenantId: string, packageId: string): Promise<Tag[]> {

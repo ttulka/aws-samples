@@ -3,5 +3,5 @@ export interface PackageStorage {
 }
 
 export interface PackageObject {
-    uploadUrl(cryptoKeyId: string): Promise<string>;
+    uploadUrl(cryptoKeyId: string): string;
 }
