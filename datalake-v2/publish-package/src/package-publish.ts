@@ -41,8 +41,7 @@ export class PackagePublish {
                     eventName: PUBLISH_EVENT_NAME,
                     eventVersion: PUBLISH_EVENT_VERSION,
                     eventTime: new Date().toISOString(),
-                    package: packageEvent,
-                    identity: {}
+                    package: packageEvent
                 }]
             }),
             MessageAttributes: {
@@ -50,7 +49,7 @@ export class PackagePublish {
                     DataType: 'String',
                     StringValue: packageEvent.type
                 },
-                'contextType': {
+                'contentType': {
                     DataType: 'String',
                     StringValue: packageEvent.contentType
                 }
