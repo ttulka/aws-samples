@@ -35,14 +35,14 @@ export class PackagePublish {
     private async publishEvent(packageEvent: PackageEvent, correlationId: string): Promise<void> {
         await this.sns.publish({
             Message: JSON.stringify({
-                Records: [{
-                    correlationId,
-                    eventSource: PUBLISH_EVENT_SOURCE,
-                    eventName: PUBLISH_EVENT_NAME,
-                    eventVersion: PUBLISH_EVENT_VERSION,
-                    eventTime: new Date().toISOString(),
-                    package: packageEvent
-                }]
+                correlationId,
+                manifest: {
+                    source: PUBLISH_EVENT_SOURCE,
+                    name: PUBLISH_EVENT_NAME,
+                    version: PUBLISH_EVENT_VERSION,
+                    time: new Date().toISOString(),
+                },
+                package: packageEvent
             }),
             MessageAttributes: {
                 'type': {
