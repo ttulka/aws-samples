@@ -1,0 +1,332 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Product/release Pipeline."
+
+Parameters:
+
+  ProductName:
+    Type: String
+    Description: "Name of the product. Prefix used in the service pipelines."
+    Default: my
+
+  PipelineTriggerInterval:
+    Type: String
+    Description: "The pipeline trigger interval (cron)."
+    Default: "0 1 ? * MON-FRI *"  # Trigger for every Monday to Friday at 01:00 (UTC)
+    
+  CodeCommitRepoName:
+    Type: String
+    Description: "The CodeCommit repo name"
+    Default: my-e2e-tests
+  CodeCommitRepoBranch:
+    Type: String
+    Description: "The CodeCommit repo branch"
+    Default: master  
+
+Resources:
+
+  S3ArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-${AWS::AccountId}-${AWS::Region}"
+  
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-codepipeline-role"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [codepipeline.amazonaws.com]
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: PipelinePolicy
+        PolicyDocument:
+          Statement:
+          - Action: ["s3:*"]
+            Resource:
+              - !Sub "arn:aws:s3:::${S3ArtifactBucket}"
+              - !Sub "arn:aws:s3:::${S3ArtifactBucket}/*"
+            Effect: Allow
+          - Action: ["codecommit:*"]
+            Resource: !Sub "arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${CodeCommitRepoName}"
+            Effect: Allow
+          - Action: ["codebuild:*"]
+            Resource: !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/${AWS::StackName}*"
+            Effect: Allow
+          - Action: ["lambda:Invoke*"]
+            Resource: !GetAtt PipelineApproval.Arn
+            Effect: Allow
+
+  CodeBuildE2ETestRole:
+    Type: AWS::IAM::Role
+    DependsOn: [S3ArtifactBucket]
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-e2e-test-codebuild-role"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [codebuild.amazonaws.com]
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: !Sub "${AWS::StackName}-e2e-test-codebuild-role-policy"
+        PolicyDocument:
+          Statement:
+          - Action: ["logs:*"]
+            Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${AWS::StackName}*"
+            Effect: Allow
+          - Action: ["s3:*"]
+            Resource: !Sub "arn:aws:s3:::${S3ArtifactBucket}/*"
+            Effect: Allow
+
+  CodeBuildE2ETest:
+    Type: AWS::CodeBuild::Project
+    DependsOn: [CodeBuildE2ETestRole]
+    Properties:
+      Name: !Sub "${AWS::StackName}-e2e-test-codebuild"
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: "aws/codebuild/ubuntu-base:14.04"
+        Type: LINUX_CONTAINER
+      ServiceRole: !Ref CodeBuildE2ETestRole
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            build:
+              commands:
+                - echo "End-to-end testing..."
+
+  CodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    DependsOn: [CodePipelineRole, S3ArtifactBucket, CodeBuildE2ETest, PipelineApproval]
+    Properties:
+      Name: !Sub "${ProductName}-release-pipeline"
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      RestartExecutionOnUpdate: true
+      ArtifactStore:
+        Type: S3
+        Location: !Ref S3ArtifactBucket
+      Stages:
+      - Name: Source
+        Actions:
+        - Name: !Sub "${CodeCommitRepoName}@${CodeCommitRepoBranch}"
+          InputArtifacts: []
+          OutputArtifacts:
+          - Name: SourceArtifact
+          ActionTypeId:
+            Category: Source
+            Owner: AWS
+            Provider: CodeCommit
+            Version: 1
+          Configuration:
+            RepositoryName: !Ref CodeCommitRepoName
+            BranchName: !Ref CodeCommitRepoBranch
+            PollForSourceChanges: false
+          RunOrder: 1
+      - Name: E2ETesting
+        Actions:
+        - Name: e2e-tests
+          InputArtifacts:
+          - Name: SourceArtifact
+          ActionTypeId:
+            Category: Test
+            Owner: AWS
+            Version: 1
+            Provider: CodeBuild
+          Configuration:
+            ProjectName: !Ref CodeBuildE2ETest
+          RunOrder: 1
+      - Name: StagingQA
+        Actions:
+        - Name: stage-qa
+          InputArtifacts: []
+          ActionTypeId:
+            Category: Invoke
+            Owner: AWS
+            Version: 1
+            Provider: Lambda
+          Configuration:
+            FunctionName: !Ref PipelineApproval
+            UserParameters: !Sub |
+              {
+                "product": "${ProductName}",
+                "stage": "StagingDEV",
+                "action": "approve"
+              }
+          RunOrder: 1
+      - Name: StagingProd
+        Actions:
+        - Name: approve
+          InputArtifacts: []
+          ActionTypeId:
+            Category: Approval
+            Owner: AWS
+            Version: 1
+            Provider: Manual
+          Configuration:
+            CustomData: "Approved by the product release pipeline"
+          RunOrder: 1
+        - Name: stage-prod
+          InputArtifacts: []
+          ActionTypeId:
+            Category: Invoke
+            Owner: AWS
+            Version: 1
+            Provider: Lambda
+          Configuration:
+            FunctionName: !Ref PipelineApproval
+            UserParameters: !Sub |
+              {
+                "product": "${ProductName}",
+                "stage": "StagingQA",
+                "action": "approve"
+              }
+          RunOrder: 2
+
+  PipelineTrigger:
+    Type: AWS::Events::Rule
+    DependsOn: [PipelineTriggerRole, CodePipeline]
+    Properties: 
+      ScheduleExpression: !Sub "cron(${PipelineTriggerInterval})"
+      State: ENABLED
+      Targets:
+        - Id: !Sub "${AWS::StackName}-pipeline-trigger"
+          Arn: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${CodePipeline}"
+          RoleArn: !GetAtt PipelineTriggerRole.Arn
+
+  PipelineTriggerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-pipeline-trigger-role"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [events.amazonaws.com]
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: EventsPolicy
+        PolicyDocument:
+          Statement:
+          - Action: ["codepipeline:StartPipelineExecution"]
+            Resource: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${CodePipeline}"
+            Effect: Allow
+
+  PipelineApprovalRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-pipeline-approval-role"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [lambda.amazonaws.com]
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: !Sub "${AWS::StackName}-pipeline-approval-role-policy"
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Action: ["logs:*", "logs:CreateLogStream", "logs:PutLogEvents"]
+            Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*"
+            Effect: Allow
+          - Action: ["codepipeline:*"]
+            Resource: "*"
+            Effect: Allow  
+      
+  PipelineApproval:
+    Type: AWS::Lambda::Function
+    DependsOn: [PipelineApprovalRole]
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-pipeline-approval"
+      Runtime: nodejs8.10
+      Handler: index.handler
+      Role: !GetAtt PipelineApprovalRole.Arn
+      Code:
+        ZipFile: >      
+          const AWS = require('aws-sdk');          
+          const codepipeline = new AWS.CodePipeline({apiVersion: '2015-07-09'});
+                   
+          exports.handler = async (event, context) => {          
+              console.log('RECEIVE EVENT: ', JSON.stringify(event));
+              
+              const jobId = event["CodePipeline.job"].id;
+              const request = JSON.parse(event["CodePipeline.job"].data.actionConfiguration.configuration.UserParameters);
+              
+              if (!request.stage) {
+                    throw new Error('"stage" parameter must be set.', JSON.stringify(request))
+              }
+              if (!request.action) {
+                  throw new Error('"action" parameter must be set.', JSON.stringify(request))
+              }
+              if (!request.product) {
+                  throw new Error('"product" parameter must be set.', JSON.stringify(request))
+              }
+                          
+              try {
+                  await approvePipelineStage(request.product, request.stage, request.action);
+                  
+                  await codepipeline.putJobSuccessResult({jobId}).promise();
+  
+              } catch(e) {
+                  await codepipeline.putJobFailureResult({jobId, failureDetails: {
+                        message: JSON.stringify(e),
+                        type: 'JobFailed',
+                        externalExecutionId: context.invokeid
+                    }}).promise();
+                  throw e;
+              }
+          }
+          
+          async function approvePipelineStage(productName, stageName, actionName) {
+              const pipelines = await listPipelines(productName);
+              await Promise.all(pipelines.map(p => approvePipeline(p, stageName, actionName)));
+          }
+          
+          async function listPipelines(productName, nextToken = null) {
+              const result = await codepipeline.listPipelines(nextToken ? {nextToken} : {}).promise();
+
+              const pipelines = result.pipelines && result.pipelines.length
+                  ? result.pipelines.map(p => p.name).filter(p => !p.startsWith(productName + '-release'))
+                  : [];
+
+              return result.nextToken
+                  ? pipelines.concat(await listPipelines(productName, result.nextToken))
+                  : pipelines.filter(p => p.startsWith(productName));
+          }  
+          
+          async function approvePipeline(pipelineName, stageName, actionName) {
+              const lastExec = await latestExecution(pipelineName, stageName, actionName);
+              console.debug('LASTEXEC', JSON.stringify(lastExec));
+              if (lastExec && lastExec.status === 'InProgress') {
+                  await codepipeline.putApprovalResult({
+                      pipelineName, stageName, actionName,
+                      token: lastExec.token,
+                      result: { status: 'Approved', summary: 'Approved by the product release pipeline' }
+                  }).promise();
+              }
+          }
+          
+          async function latestExecution(pipelineName, stageName, actionName) {
+              const state = await codepipeline.getPipelineState({name: pipelineName}).promise();
+              console.debug('STATE', JSON.stringify(state));
+              if (state.stageStates && state.stageStates.length) {
+                  const stage = state.stageStates.find(stage => stage.stageName === stageName)
+                  if (stage) {
+                      const action = stage.actionStates.find(action => action.actionName === actionName);
+                      if (action && action.latestExecution) {
+                          return action.latestExecution
+                      }
+                  }
+              }
+          }
