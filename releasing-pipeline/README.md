@@ -18,4 +18,6 @@ This product releasing pipeline triggers the manual approval in service pipeline
 1. Create a CloudFormation stack `my-service-b-pipeline` by template `service-pipeline.yml` with following parameters:
   - `service-b` as `ProjectName`
   - `my-service-b` as `CodeCommitRepoName`
-1. Create a CloudFormation stack `my-release-pipeline` by template `release-pipeline.yml`.  
+1. Create a CloudFormation stack `my-release-pipeline` by template `release-pipeline.yml`.
+
+More info: http://blog.net21.cz/product-releasing-pipeline-in-aws-127  
