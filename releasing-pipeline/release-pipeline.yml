@@ -307,7 +307,6 @@ Resources:
           
           async function approvePipeline(pipelineName, stageName, actionName) {
               const lastExec = await latestExecution(pipelineName, stageName, actionName);
-              console.debug('LASTEXEC', JSON.stringify(lastExec));
               if (lastExec && lastExec.status === 'InProgress') {
                   await codepipeline.putApprovalResult({
                       pipelineName, stageName, actionName,
@@ -319,7 +318,6 @@ Resources:
           
           async function latestExecution(pipelineName, stageName, actionName) {
               const state = await codepipeline.getPipelineState({name: pipelineName}).promise();
-              console.debug('STATE', JSON.stringify(state));
               if (state.stageStates && state.stageStates.length) {
                   const stage = state.stageStates.find(stage => stage.stageName === stageName)
                   if (stage) {
