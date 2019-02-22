@@ -147,9 +147,30 @@ Resources:
           artifacts:
             files: ['*.js']
 
+  CodeBuildTest:
+    Type: AWS::CodeBuild::Project
+    DependsOn: [CodeBuildRole]
+    Properties:
+      Name: !Sub "${AWS::StackName}-test-codebuild"
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: "aws/codebuild/ubuntu-base:14.04"
+        Type: LINUX_CONTAINER
+      ServiceRole: !Ref CodeBuildRole
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            build:
+              commands:
+                - echo "Integration testing..."
+
   CodePipeline:
     Type: AWS::CodePipeline::Pipeline
-    DependsOn: [CodePipelineRole, S3ArtifactBucket, CodeBuild]
+    DependsOn: [CodePipelineRole, S3ArtifactBucket, CodeBuild, CodeBuildTest]
     Properties:
       Name: !Sub "${ProductName}-${ProjectName}-pipeline"
       RoleArn: !GetAtt CodePipelineRole.Arn
@@ -191,7 +212,7 @@ Resources:
           RunOrder: 1
       - Name: StagingDEV
         Actions:
-        - Name: stage-dev
+        - Name: stage
           InputArtifacts:
             - Name: SourceArtifact
             - Name: BuildArtifact
@@ -216,6 +237,17 @@ Resources:
                 "LambdaS3Key" : { "Fn::GetArtifactAtt" : ["BuildArtifact", "ObjectKey"] }
               }
           RunOrder: 1
+        - Name: test
+          InputArtifacts:
+          - Name: SourceArtifact
+          ActionTypeId:
+            Category: Test
+            Owner: AWS
+            Version: 1
+            Provider: CodeBuild
+          Configuration:
+            ProjectName: !Ref CodeBuildTest
+          RunOrder: 2
         - Name: approve
           InputArtifacts: []
           OutputArtifacts: []
@@ -226,10 +258,10 @@ Resources:
             Provider: Manual
           Configuration:
             CustomData: "Approval to deploy to the QA stage."
-          RunOrder: 2
+          RunOrder: 3
       - Name: StagingQA
         Actions:
-        - Name: stage-qa
+        - Name: stage
           InputArtifacts:
           - Name: SourceArtifact
           - Name: BuildArtifact
@@ -267,7 +299,7 @@ Resources:
           RunOrder: 2
       - Name: StagingPROD
         Actions:
-        - Name: stage-prod
+        - Name: stage
           InputArtifacts:
           - Name: SourceArtifact
           - Name: BuildArtifact

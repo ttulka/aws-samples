@@ -146,7 +146,7 @@ Resources:
           RunOrder: 1
       - Name: StagingQA
         Actions:
-        - Name: stage-qa
+        - Name: stage
           InputArtifacts: []
           ActionTypeId:
             Category: Invoke
@@ -174,7 +174,7 @@ Resources:
           Configuration:
             CustomData: "Approved by the product release pipeline"
           RunOrder: 1
-        - Name: stage-prod
+        - Name: stage
           InputArtifacts: []
           ActionTypeId:
             Category: Invoke
