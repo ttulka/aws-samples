@@ -1,0 +1,111 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "API Gateway Deployment"
+
+Parameters:
+
+  Stage:
+    Type: String
+    Description: "Deployment stage name."
+    Default: test
+  
+  ApiVersion:
+    Type: String
+    Description: "API version must be changed by each new deployment."
+    Default: "1.0.0"
+    
+Resources:
+
+  Api:
+    Type: AWS::ApiGateway::RestApi
+    DependsOn: [ApiRole, TestLambda]
+    Properties:
+      Name: !Sub "${AWS::StackName}-gateway-api-${AWS::Region}-${Stage}"
+      Body:
+        swagger: "2.0"
+        info:
+          version: "2018-03-20T13:41:34Z"
+          title: !Sub "platform-api-${AWS::Region}-${Stage}"
+        basePath: "/"
+        schemes:
+        - "https"
+        paths:
+          /test:
+            get:
+              x-amazon-apigateway-integration:
+                uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${TestLambda}/invocations"
+                passthroughBehavior: "when_no_match"
+                httpMethod: "POST"
+                contentHandling: "CONVERT_TO_TEXT"
+                type: "aws_proxy"
+                credentials: !GetAtt ApiRole.Arn
+
+  ApiRole:
+    Type: AWS::IAM::Role
+    DependsOn: [TestLambda]
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-gateway-api-role-${AWS::Region}-${Stage}"
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service:
+            - apigateway.amazonaws.com
+      Path: "/"
+      Policies:
+      - PolicyName: ApiPolicy
+        PolicyDocument:
+          Statement:
+          - Action: ["lambda:invoke*"]
+            Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${TestLambda}*"
+            Effect: Allow
+          - Action: ["cloudwatch:*"]
+            Resource: !Sub "arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:*"
+            Effect: Allow
+
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: [Api]
+    Properties:
+      Description: !Sub "API Version: ${ApiVersion}"
+      RestApiId: !Ref Api
+      StageName: !Ref Stage
+
+  TestLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: [TestLambdaRole]
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-tenant-test-${AWS::Region}-${Stage}"
+      Role: !GetAtt TestLambdaRole.Arn
+      Runtime: nodejs6.10
+      Handler: index.handler
+      Code:
+        ZipFile: >
+          exports.handler = async event => 'Test works!';
+
+  TestLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-tenant-test-role-${AWS::Region}-${Stage}"
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [lambda.amazonaws.com]
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: LambdaPolicy
+        PolicyDocument:
+          Statement:
+          - Action: ["logs:*"]
+            Effect: Allow
+            Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*"
+
+Outputs:
+
+  Url:
+    Description: URL of the Platform API
+    Value: !Sub "https://${Api}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"
+    Export:
+      Name: !Sub "${AWS::StackName}-url"
